@@ -3,8 +3,8 @@
   "placeFile": "place/noclip-protocol.rbxlx",
   "game": {
     "name": "Noclip Protocol",
-    "placeId": null,
-    "universeId": null
+    "placeId": 90472056249191,
+    "universeId": 10775950241
   },
   "sentinel": "ServerScriptService.NoclipBoot"
 }
