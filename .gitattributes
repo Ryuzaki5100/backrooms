@@ -1,0 +1,5 @@
+# XML place files diff well when normalised
+*.rbxlx text eol=lf
+*.rbxl binary
+*.luau text eol=lf
+*.json text eol=lf

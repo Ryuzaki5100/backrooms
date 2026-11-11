@@ -1,0 +1,12 @@
+# Build output and generated analysis inputs
+/build/
+/sourcemap.json
+/globalTypes.d.luau
+
+# Binary place files: only the XML .rbxlx form is tracked
+*.rbxl
+
+# Tool state
+/.devenv/
+/.direnv/
+/.selene-cache/

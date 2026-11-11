@@ -1,0 +1,10 @@
+{
+  "repo": "backrooms",
+  "placeFile": "place/noclip-protocol.rbxlx",
+  "game": {
+    "name": "Noclip Protocol",
+    "placeId": null,
+    "universeId": null
+  },
+  "sentinel": "ServerScriptService.NoclipBoot"
+}

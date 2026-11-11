@@ -1,0 +1,55 @@
+{
+  "name": "noclip-protocol",
+  "tree": {
+    "$className": "DataModel",
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "NoclipBoot": {
+        "$path": "src/server/NoclipBoot.server.luau"
+      }
+    },
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "NoclipConfig": {
+        "$path": "src/shared/NoclipConfig.luau"
+      }
+    },
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "NoclipClient": {
+          "$path": "src/client/NoclipClient.client.luau"
+        }
+      }
+    },
+    "Workspace": {
+      "$className": "Workspace",
+      "Baseplate": {
+        "$className": "Part",
+        "$properties": {
+          "Anchored": true,
+          "Size": [512, 20, 512],
+          "Position": [0, -10, 0],
+          "TopSurface": "Smooth",
+          "BottomSurface": "Smooth"
+        }
+      },
+      "SpawnLocation": {
+        "$className": "SpawnLocation",
+        "$properties": {
+          "Anchored": true,
+          "Neutral": true,
+          "Size": [12, 1, 12],
+          "Position": [0, 0.5, 0]
+        }
+      }
+    },
+    "Lighting": {
+      "$className": "Lighting"
+    },
+    "SoundService": {
+      "$className": "SoundService"
+    }
+  }
+}

@@ -1,0 +1,114 @@
+<roblox version="4">
+  <Item class="Lighting" referent="0">
+    <Properties>
+      <string name="Name">Lighting</string>
+    </Properties>
+  </Item>
+  <Item class="ReplicatedStorage" referent="1">
+    <Properties>
+      <string name="Name">ReplicatedStorage</string>
+    </Properties>
+    <Item class="ModuleScript" referent="2">
+      <Properties>
+        <string name="Name">NoclipConfig</string>
+        <string name="Source"><![CDATA[--!strict
+
+-- Single source of truth for strings the game shows or prints.
+-- Keep this module the only place the game name lives in Luau.
+return {
+	name = "Noclip Protocol",
+	version = "0.1.0",
+}
+]]></string>
+      </Properties>
+    </Item>
+  </Item>
+  <Item class="ServerScriptService" referent="3">
+    <Properties>
+      <string name="Name">ServerScriptService</string>
+    </Properties>
+    <Item class="Script" referent="4">
+      <Properties>
+        <string name="Name">NoclipBoot</string>
+        <token name="RunContext">0</token>
+        <string name="Source"><![CDATA[--!strict
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local NoclipConfig = require(ReplicatedStorage:WaitForChild("NoclipConfig"))
+
+print(string.format("[noclip] boot ok - %s v%s", NoclipConfig.name, NoclipConfig.version))
+]]></string>
+      </Properties>
+    </Item>
+  </Item>
+  <Item class="SoundService" referent="5">
+    <Properties>
+      <string name="Name">SoundService</string>
+    </Properties>
+  </Item>
+  <Item class="StarterPlayer" referent="6">
+    <Properties>
+      <string name="Name">StarterPlayer</string>
+    </Properties>
+    <Item class="StarterPlayerScripts" referent="7">
+      <Properties>
+        <string name="Name">StarterPlayerScripts</string>
+      </Properties>
+      <Item class="LocalScript" referent="8">
+        <Properties>
+          <string name="Name">NoclipClient</string>
+          <string name="Source"><![CDATA[--!strict
+
+local Players = game:GetService("Players")
+
+local player = Players.LocalPlayer
+
+print(string.format("[noclip] client ok - %s", player.Name))
+]]></string>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="Workspace" referent="9">
+    <Properties>
+      <string name="Name">Workspace</string>
+      <bool name="NeedsPivotMigration">false</bool>
+    </Properties>
+    <Item class="Part" referent="10">
+      <Properties>
+        <string name="Name">Baseplate</string>
+        <bool name="Anchored">true</bool>
+        <token name="BottomSurface">0</token>
+        <Vector3 name="Position">
+          <X>0</X>
+          <Y>-10</Y>
+          <Z>0</Z>
+        </Vector3>
+        <Vector3 name="size">
+          <X>512</X>
+          <Y>20</Y>
+          <Z>512</Z>
+        </Vector3>
+        <token name="TopSurface">0</token>
+      </Properties>
+    </Item>
+    <Item class="SpawnLocation" referent="11">
+      <Properties>
+        <string name="Name">SpawnLocation</string>
+        <bool name="Anchored">true</bool>
+        <bool name="Neutral">true</bool>
+        <Vector3 name="Position">
+          <X>0</X>
+          <Y>0.5</Y>
+          <Z>0</Z>
+        </Vector3>
+        <Vector3 name="size">
+          <X>12</X>
+          <Y>1</Y>
+          <Z>12</Z>
+        </Vector3>
+      </Properties>
+    </Item>
+  </Item>
+</roblox>
