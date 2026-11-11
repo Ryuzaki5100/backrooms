@@ -68,7 +68,13 @@ gitignored. `devenv.lock` IS committed: it pins the toolchain.
 ## Studio bridge
 
 Roblox Studio is driven through its MCP server (registered globally in
-`~/.config/opencode/opencode.json`). Verify the target session before editing:
+`~/.config/opencode/opencode.json` and per-project in `.opencode/opencode.json`).
+
+**Full procedure, cold start, and troubleshooting: `docs/RUNBOOK.md`.** Read it
+before improvising. Slash commands: `/sync` (reconcile files, Studio, GitHub) and
+`/doctor` (diagnose a broken bridge).
+
+Verify the target session before editing:
 
 1. `list_roblox_studios` → match the entry by sentinel/place, not by a
    lookalike window name.

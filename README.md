@@ -24,4 +24,6 @@ stylua src                       # format
 ```
 
 Luau edits go in `src/`; geometry goes in the tracked place file. Both are
-committed. See `AGENTS.md` for the full operating contract.
+committed. See `docs/RUNBOOK.md` for the step-by-step procedure (cold start,
+daily loop, git, publishing, troubleshooting) and `AGENTS.md` for the agent
+contract.
