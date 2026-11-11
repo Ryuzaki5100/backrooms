@@ -237,6 +237,10 @@ in the repo needs changing.
 9. **A local place has no `placeId`.** `list_roblox_studios` returns a `file`
    field instead. Match cloud sessions by `placeId`, local sessions by file name;
    never by the window title alone.
+10. **Nix flakes ignore untracked files.** A new module or script is invisible to
+    `home-manager switch` until `git add -N` (or a commit). The error is
+    "Path … is not tracked by Git", not the module being wrong.
+
 
 
 ---
