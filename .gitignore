@@ -12,3 +12,7 @@ devenv.local.nix
 /.direnv/
 /.selene-cache/
 /.envrc
+
+# Studio lock files for opened local places
+*.rbxlx.lock
+*.rbxl.lock
