@@ -8,5 +8,7 @@
 
 # Tool state
 /.devenv/
+devenv.local.nix
 /.direnv/
 /.selene-cache/
+/.envrc

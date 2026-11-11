@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "roblox": {
+      "command": "roblox-studio-mcp"
+    }
+  }
+}

@@ -26,16 +26,29 @@ rename the repo to match the game. If a place ID is needed, read it from
 
 ## Commands
 
+Everything runs inside the pinned environment. Enter it first:
+
+```sh
+devenv shell            # rojo, selene, stylua, luau-lsp, lune, jq + helpers
+devenv up               # start the Rojo server (the files -> Studio bridge)
+devenv test             # lint + format check + build
+```
+
 | Task | Command |
 |---|---|
-| Build the place | `rojo build default.project.json -o place/noclip-protocol.rbxlx` |
-| Live sync into Studio | `rojo serve` (port 34872, Rojo plugin) |
-| Generate LSP sourcemap | `rojo sourcemap default.project.json --output sourcemap.json` |
-| Lint | `selene src` |
-| Format | `stylua src` (check: `stylua --check src`) |
-| Build + lint + format gate | `rojo build ... && selene src && stylua --check src` |
+| Open Studio on the tracked place | `studio-open` (add `--cloud` for the published place) |
+| Start live sync | `devenv up` (or `rojo serve --port 34872`) |
+| Build the place | `build` → `rojo build default.project.json -o place/noclip-protocol.rbxlx` |
+| Generate LSP sourcemap | `sourcemap` |
+| Lint | `lint` (`selene src`) |
+| Format | `fmt` (`stylua src`) |
+| Check the bridge is healthy | `preflight` |
+| Git state (files vs GitHub) | `status` |
+| Pull, optionally commit and push | `sync.sh -m "message"` |
+| Publish to the Roblox place | `publish` (needs `ROBLOX_API_KEY`) |
 
-`sourcemap.json`, `globalTypes.d.luau` and `build/` are generated and gitignored.
+`sourcemap.json`, `globalTypes.d.luau`, `build/` and `.devenv/` are generated and
+gitignored. `devenv.lock` IS committed: it pins the toolchain.
 
 ## Conventions
 
