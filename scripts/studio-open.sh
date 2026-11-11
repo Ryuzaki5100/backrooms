@@ -37,12 +37,20 @@ fi
 if [ "$mode" = cloud ]; then
 	[ -n "$place_id" ] || { echo "studio-open: no game.placeId in roblox.json" >&2; exit 1; }
 	[ -n "$universe_id" ] || { echo "studio-open: no game.universeId in roblox.json" >&2; exit 1; }
-	exec open -a RobloxStudio --args --task EditPlace \
-		--placeId "$place_id" --universeId "$universe_id"
+	# Launching the binary with a task opens a session for that place. Do not
+	# also open the file: two launches leave one instance at "Place is not open".
+	"/Applications/RobloxStudio.app/Contents/MacOS/RobloxStudio" \
+		--task EditPlace --placeId "$place_id" --universeId "$universe_id" \
+		>/dev/null 2>&1 &
+	echo "studio-open: launched cloud place $place_id (close other Studio windows first)"
+	exit 0
 fi
 
 [ -f "$place_file" ] || {
 	echo "studio-open: $place_file is missing; run 'rojo build default.project.json -o $place_file'" >&2
 	exit 1
 }
-exec open -a RobloxStudio --args --task EditFile --localPlaceFile "$ROOT/$place_file"
+# Proven path: hand the file to LaunchServices as an argument. The
+# `--args --task EditFile` form silently fails to load the place when Studio is
+# already running.
+exec open -a RobloxStudio "$ROOT/$place_file"

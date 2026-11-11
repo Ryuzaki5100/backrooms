@@ -172,6 +172,7 @@ noise recorded in §10 disappears after the first publish.
 | No Rojo button in Plugins tab | Studio was running when the plugin was installed (plugins load only at startup) | Quit Studio fully (`Cmd+Q`), reopen |
 | Rojo button exists, no Connect | Panel closed | Plugins tab → Rojo → Connect |
 | Connect fails, "address in use" | a stale `rojo serve` | `lsof -nP -iTCP:34872` then kill it, or `devenv down` |
+| Extra Studio entry with "Place is not open" | the place was launched twice | ignore it, or quit that window; launch once (§10.4) |
 | Studio not listed by the agent | MCP toggle off, or no place open | Enable in Assistant settings; open a place |
 | Agent edited the wrong window | two Studio instances open | always match `placeId`, then the sentinel; never match by name |
 | Script edits don't appear | file not mapped in `default.project.json`, or wrong session | add the mapping; `script_read` to confirm the target |
@@ -183,21 +184,60 @@ noise recorded in §10 disappears after the first publish.
 
 ---
 
-## 10. Known issues in the current cloud place
+## 10. Studio-side console noise (not this project)
 
-Recorded 2026-11-11 while playtesting the template-derived cloud place:
+Every playtest — including one in a clean place built from this repo — prints:
 
 ```
 cloud_3104443226.S^X | v1.4.1b:26: attempt to index nil with 'WaitForChild'
 ContentId: rbxassetid://203785492 failed due to: Asset type does not match requested type
 ```
 
-Neither comes from this repo: there is no such script in the DataModel, the
-Rojo plugin binary does not contain that identifier, and the asset ID is
-referenced by **zero** instances. They belong to the place session, not the
-project. Expected to disappear once the tracked local place is published over
-the cloud place; if they persist in a place built from `place/noclip-protocol.rbxlx`,
-they are Studio/engine-level and can be ignored.
+Confirmed not to come from this repository:
+
+- a DataModel-wide scan for `203785492` returns **zero** matches;
+- `search_game_tree` shows only `NoclipBoot`, `NoclipClient`, `NoclipConfig`;
+- the Rojo plugin binary contains neither identifier;
+- the same two errors appear in the template **cloud** place and in the clean
+  **local** place built from `place/noclip-protocol.rbxlx`.
+
+They are Studio/engine-level (an injected cloud script plus an asset type
+mismatch). Reported to Roblox with `submit_feedback`. Ignore them; they are not
+a signal about your code. If they ever disappear after a Studio update, nothing
+in the repo needs changing.
+
+### Lessons learned the hard way
+
+1. **Studio scans plugins only at startup.** Installing the Rojo plugin while
+   Studio is running does nothing visible — no button, no error. Quit with
+   `Cmd+Q` and reopen. (Detected by comparing process start time with the
+   plugin file's mtime.)
+2. **`enterTest` is inert in devenv 2.4.** Declaring the option leaves
+   `devenv:enterTest` with "no command" and `devenv test` passes without running
+   anything. It must be `tasks."devenv:enterTest".exec`. Verify with
+   `devenv tasks list`.
+3. **Never run `rojo serve` and `devenv up` together.** The second fails with
+   "address already in use"; the port belongs to one process only. Use
+   `devenv up`, and `devenv down` to stop it.
+4. **Launch Studio exactly once per place.** `open -a RobloxStudio file.rbxlx`
+   forwards the file through the protocol handler, and running the binary with
+   `--task EditFile` does too. Do both and one instance keeps the file while the
+   other sits at "Place is not open" — visible in `list_roblox_studios` as an
+   extra entry with `mode: Unavailable`.
+5. **Rojo silently overwrites Studio-side script edits.** There is no conflict
+   detection. That is why scripts are edited in files and why the sync gesture
+   compares before writing. Geometry is the opposite direction and is safe.
+6. **`save_place` writes to disk only for local places.** On a cloud place it
+   creates a cloud version that git never sees. This is the reason the tracked
+   local place is canonical.
+7. **`wally` is `badPlatforms` on aarch64-darwin** in nixpkgs. It is deliberately
+   absent; pin its prebuilt release per-project if a package is ever needed.
+8. **`devenv test` does not prove your test ran** unless the task has a command —
+   see (2). Check `devenv tasks list` when a green result looks suspicious.
+9. **A local place has no `placeId`.** `list_roblox_studios` returns a `file`
+   field instead. Match cloud sessions by `placeId`, local sessions by file name;
+   never by the window title alone.
+
 
 ---
 
@@ -207,8 +247,10 @@ Order of operations when the user says *"sync"*, *"is it connected"*, or *"I'm s
 
 1. `list_roblox_studios` — if empty: Studio is closed, the place is not loaded,
    or "Enable Studio as MCP server" is off. Report which, do not guess.
-2. Match the instance by `placeId` from `roblox.json`; use the Studio name only
-   to disambiguate two windows, never as proof.
+2. Match the instance: cloud sessions by the `placeId` from `roblox.json`, local
+   sessions by the `file` field (a local place has no placeId). Use the Studio
+   name only to disambiguate two windows, never as proof. An entry with
+   `mode: Unavailable` / "Place is not open" is a stray window — ignore it.
 3. `get_studio_state` — must be `Edit`. If play mode is running, stop it before
    touching scripts.
 4. Check the sentinel: `search_game_tree` for `ServerScriptService` and confirm

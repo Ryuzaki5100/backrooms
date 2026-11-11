@@ -76,8 +76,13 @@ before improvising. Slash commands: `/sync` (reconcile files, Studio, GitHub) an
 
 Verify the target session before editing:
 
-1. `list_roblox_studios` → match the entry by sentinel/place, not by a
-   lookalike window name.
+1. `list_roblox_studios` → match cloud sessions by `placeId`, local sessions by
+   the `file` field. Never match by window title alone.
 2. `get_studio_state` → confirm `Edit` mode.
 3. Look for `ServerScriptService.NoclipBoot` in the tree; if it is missing, Rojo
    is not synced and file edits will not reach Studio.
+
+Hard-won constraints (details in `docs/RUNBOOK.md` §10): Studio only scans the
+Plugins folder at startup; never run `rojo serve` and `devenv up` together; launch
+Studio once per place; Rojo silently overwrites Studio-side script edits; and
+`save_place` only writes to disk for local places.
