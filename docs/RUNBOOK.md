@@ -219,11 +219,13 @@ in the repo needs changing.
 3. **Never run `rojo serve` and `devenv up` together.** The second fails with
    "address already in use"; the port belongs to one process only. Use
    `devenv up`, and `devenv down` to stop it.
-4. **Launch Studio exactly once per place.** `open -a RobloxStudio file.rbxlx`
-   forwards the file through the protocol handler, and running the binary with
-   `--task EditFile` does too. Do both and one instance keeps the file while the
-   other sits at "Place is not open" — visible in `list_roblox_studios` as an
-   extra entry with `mode: Unavailable`.
+4. **`open -a RobloxStudio <file>` does not load the place.** It starts a
+   protocol-handler process that reports `mode: Unavailable`,
+   `"Place is not open"` — even with no other Studio running. Use
+   `studio-open`, which runs the binary directly with
+   `--task EditFile --localPlaceFile` and detaches with `nohup`. Launch exactly
+   one instance per place, and ignore `Unavailable` entries in
+   `list_roblox_studios`.
 5. **Rojo silently overwrites Studio-side script edits.** There is no conflict
    detection. That is why scripts are edited in files and why the sync gesture
    compares before writing. Geometry is the opposite direction and is safe.
