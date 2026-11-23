@@ -1,0 +1,5 @@
+# noclip project config — parsed by the noclip command.
+# Relative paths resolve against this directory (the repo root).
+vault=../noclip-protocol-vault
+jobs=2
+worktrees=1

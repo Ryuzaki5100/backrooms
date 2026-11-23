@@ -59,6 +59,53 @@ gitignored. `devenv.lock` IS committed: it pins the toolchain.
   committing rather than hand-aligning.
 - The game name is not repeated in Luau: read it from `src/shared/NoclipConfig.luau`.
 
+## Multi-agent workflow
+
+Work is scheduled from an Obsidian vault at `../noclip-vault` (path in
+`.noclip`). The vault — not this repository — is the queue and the shared memory.
+Never edit the queue by hand while `noclip run` is running.
+
+| Role | Owns | Never touches |
+|---|---|---|
+| `librarian` | task notes, ADRs | any repo file |
+| `designer` | `10-design/`, `00-brief/` | `src/`, Studio |
+| `scripter` | `src/`, `default.project.json` | `place/`, Studio |
+| `asset-smith` | `20-assets/`, Studio instances | `src/` |
+| `audio` | `30-audio/`, `Sound` instances | `src/`, geometry |
+| `qa` | verification reports in `50-log/` | any edit |
+| `builder` | merges, place file, publish | design decisions |
+| `lore-keeper` | `60-lore/` wiki corpus | code, design, `game_hooks` |
+
+Two lanes. `lane: files` tasks run in parallel, each in its own git worktree
+under `.noclip-worktrees/` (gitignored) and on its own `noclip/<task>` branch.
+`lane: studio` tasks run **one at a time, in this checkout**, because Studio is a
+single mutable process and Rojo is bound to this directory.
+
+```sh
+noclip status                  # queue board + studio lock
+noclip new "Title" --agent scripter --lane files
+noclip run --once              # dispatch one task
+noclip run                     # drain the backlog, `jobs` at a time
+noclip merge <task-id>         # integrate a files-lane branch
+noclip doctor                  # toolchain, agents, vault, stale locks
+```
+
+Rules that keep this safe:
+
+1. A task is claimed by moving its note into `40-tasks/active/`; `mv` is the
+   lock. Do not move notes yourself.
+2. Only `noclip` marks a task `done` (agent exit 0) or `blocked` (non-zero).
+3. Studio work is serialized by `../noclip-vault/.locks/studio`. A stale lock is
+   reported by `noclip doctor`; remove it only when no agent is running.
+4. Agents commit inside their worktree branch; `builder` merges. Direct commits
+   to `main` from an agent are a bug, not a shortcut.
+5. `scripter` never calls `save_place`; `asset-smith` never edits scripts. If a
+   task needs both, split it into two notes.
+6. Lore is read, not paraphrased. A task that leans on the wiki cites the
+   `60-lore/` note it used; only `lore-keeper` writes there.
+
+Full procedure: `docs/AGENTS-WORKFLOW.md`.
+
 ## Committing
 
 - Commit `src/` and `place/` together when a change spans both.

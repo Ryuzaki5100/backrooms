@@ -13,6 +13,9 @@ devenv.local.nix
 /.selene-cache/
 /.envrc
 
+# Per-task git worktrees created by `noclip run`
+/.noclip-worktrees/
+
 # Studio lock files for opened local places
 *.rbxlx.lock
 *.rbxl.lock
