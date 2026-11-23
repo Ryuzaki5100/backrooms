@@ -279,6 +279,15 @@ edits), `execute_luau`, `start_stop_play`, `get_console_output`,
 
 ---
 
+
+### Test task and the Rojo port
+
+`devenv test` starts the `processes.rojo` entry, so it fails with
+`Address already in use (os error 48)` if a `rojo serve` is already holding
+34872. Stop the server first, or run the steps directly. This is the third
+variant of the one-server rule: `rojo serve`, `devenv up` and `devenv test`
+cannot all be running at once.
+
 ## 12. Reference
 
 ```sh
