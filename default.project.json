@@ -15,6 +15,9 @@
       },
       "Procgen": {
         "$path": "src/shared/procgen"
+      },
+      "Config": {
+        "$path": "src/config"
       }
     },
     "StarterPlayer": {

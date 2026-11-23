@@ -7,5 +7,6 @@ require("./procgen/hash.spec")
 require("./procgen/rng.spec")
 require("./procgen/seed.spec")
 require("./procgen/plan.spec")
+require("./procgen/config.spec")
 
 process.exit(Harness.run())

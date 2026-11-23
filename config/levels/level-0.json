@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "id": "level-0",
+  "title": "Level 0: The Lobby",
+  "dead_end": false,
+  "source": {
+    "note": "60-lore/levels/level-0.md",
+    "revid": 1397338
+  },
+  "generate": {
+    "regions": [8, 14],
+    "tiles": 480,
+    "genMs": 1500,
+    "loops": 3,
+    "deadEnds": 2,
+    "maxLevels": 2
+  },
+  "tileset": "lobby",
+  "transitions": [
+    { "id": "l0.phase-wall", "to": "level-1", "gate": "phase_wall" },
+    { "id": "l0.vent", "to": "level-0-1", "gate": "trigger:vent" },
+    { "id": "l0.glass-doors", "to": "level-13", "gate": "trigger:glass_doors" }
+  ],
+  "style": null,
+  "props": [
+    { "asset": "procedural:wall_outlet", "weight": 6, "anchor": "wall", "access": "walk" },
+    { "asset": "procedural:ceiling_vent", "weight": 2, "anchor": "ceiling", "access": "item:mask" },
+    { "asset": "procedural:void_room", "weight": 1, "anchor": "volume", "access": "sealed" }
+  ],
+  "hazards": [
+    { "id": "l0.fluorescent-hum", "kind": "ambient", "gain": -24 }
+  ],
+  "entities": [],
+  "lighting": {
+    "clockTime": 13,
+    "fogEnd": 80,
+    "bloom": 0.2,
+    "ambient": "#3a3620"
+  }
+}

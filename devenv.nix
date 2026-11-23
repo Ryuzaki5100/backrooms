@@ -46,6 +46,7 @@ in {
     build.exec = "rojo build default.project.json -o ${identity.placeFile}";
     sourcemap.exec = "rojo sourcemap default.project.json --output sourcemap.json";
     progentest.exec = "lune run tests/run.luau";
+    configcheck.exec = "lune run scripts/gen-config.luau --check";
   };
 
   # devenv 2.x exposes "test" as a task; assigning the legacy enterTest option
@@ -54,6 +55,7 @@ in {
     mkdir -p build
     selene src
     stylua --check src
+    lune run scripts/gen-config.luau --check
     lune run tests/run.luau
     rojo build default.project.json -o build/test.rbxlx
   '';
