@@ -12,6 +12,9 @@
       "$className": "ReplicatedStorage",
       "NoclipConfig": {
         "$path": "src/shared/NoclipConfig.luau"
+      },
+      "Procgen": {
+        "$path": "src/shared/procgen"
       }
     },
     "StarterPlayer": {
