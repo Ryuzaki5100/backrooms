@@ -294,7 +294,7 @@ lint / fmt / build / sourcemap   # devenv script wrappers
 noclip status | run | merge | doctor   # vault task queue (docs/AGENTS-WORKFLOW.md)
 ```
 
-Paths: `src/{server,client,shared}`, `place/`, `scripts/`, `.opencode/`, `../noclip-vault/`.
+Paths: `src/{server,client,shared}`, `place/`, `scripts/`, `.opencode/`, `../noclip-protocol-vault/`.
 Generated and ignored: `build/`, `sourcemap.json`, `globalTypes.d.luau`, `.devenv/`.
 Committed and pinned: `devenv.nix`, `devenv.yaml`, `devenv.lock`.
 

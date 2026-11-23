@@ -61,12 +61,13 @@ gitignored. `devenv.lock` IS committed: it pins the toolchain.
 
 ## Multi-agent workflow
 
-Work is scheduled from an Obsidian vault at `../noclip-vault` (path in
+Work is scheduled from an Obsidian vault at `../noclip-protocol-vault` (path in
 `.noclip`). The vault — not this repository — is the queue and the shared memory.
 Never edit the queue by hand while `noclip run` is running.
 
 | Role | Owns | Never touches |
 |---|---|---|
+| `noclip` | deciding and delegating (primary) | code, design, lore, Studio |
 | `librarian` | task notes, ADRs | any repo file |
 | `designer` | `10-design/`, `00-brief/` | `src/`, Studio |
 | `scripter` | `src/`, `default.project.json` | `place/`, Studio |
@@ -80,6 +81,12 @@ Two lanes. `lane: files` tasks run in parallel, each in its own git worktree
 under `.noclip-worktrees/` (gitignored) and on its own `noclip/<task>` branch.
 `lane: studio` tasks run **one at a time, in this checkout**, because Studio is a
 single mutable process and Rojo is bound to this directory.
+
+Agent roles are **project-scoped**: they live in `.opencode/agents/` and are
+loaded only while working in this repository (or a worktree of it). `noclip` is
+the default primary and delegates; the eight roles stay selectable so a single
+one can be driven by hand. `noclip agents check` verifies the committed set still
+matches the installed one.
 
 ```sh
 noclip status                  # queue board + studio lock
@@ -95,7 +102,7 @@ Rules that keep this safe:
 1. A task is claimed by moving its note into `40-tasks/active/`; `mv` is the
    lock. Do not move notes yourself.
 2. Only `noclip` marks a task `done` (agent exit 0) or `blocked` (non-zero).
-3. Studio work is serialized by `../noclip-vault/.locks/studio`. A stale lock is
+3. Studio work is serialized by `../noclip-protocol-vault/.locks/studio`. A stale lock is
    reported by `noclip doctor`; remove it only when no agent is running.
 4. Agents commit inside their worktree branch; `builder` merges. Direct commits
    to `main` from an agent are a bug, not a shortcut.

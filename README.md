@@ -30,7 +30,7 @@ contract.
 
 ## Multi-agent work
 
-Work is scheduled from the Obsidian vault at `../noclip-vault`, not from a chat
+Work is scheduled from the Obsidian vault at `../noclip-protocol-vault`, not from a chat
 window:
 
 ```sh

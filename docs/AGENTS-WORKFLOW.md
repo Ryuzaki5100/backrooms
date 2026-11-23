@@ -3,7 +3,7 @@
 How work moves through this repository without a server, a paid orchestrator, or
 a shared chat window.
 
-- **Memory and queue:** `../noclip-vault` (Obsidian folder, its own git repo).
+- **Memory and queue:** `../noclip-protocol-vault` (Obsidian folder, its own git repo).
 - **Scheduler:** the `noclip` command (`scripts/noclip.sh` in `~/dotfiles`).
 - **Workers:** `opencode run --agent <role>` — one process per task.
 - **Isolation:** one git worktree per `files`-lane task.
@@ -54,6 +54,7 @@ worker fails but one, and a failure to move means "somebody else has it".
 
 | Role | Surface | Lane | Refuses |
 |---|---|---|---|
+| `noclip` | the queue and delegation | files | every write except `40-tasks/` |
 | `librarian` | vault only | files | touching code, marking tasks done |
 | `designer` | `10-design/`, `00-brief/` | files | writing Luau, opening Studio |
 | `scripter` | `src/`, Rojo mapping | files | `place/`, `save_place`, publishing |
@@ -63,8 +64,27 @@ worker fails but one, and a failure to move means "somebody else has it".
 | `builder` | merges, build, publish | files | force-push, unverified "done" |
 | `lore-keeper` | `60-lore/` wiki corpus | files | code, design, `game_hooks` |
 
-Definitions live in `~/dotfiles/agents/*.md`, deployed by Home Manager to
-`~/.config/opencode/agents/`. Edit them there, not per project.
+Definitions live in `.opencode/agents/` in this repository — **project-scoped on
+purpose**. They load only while the working directory is inside this project (or
+a worktree of it); in any other repository the picker shows only Build and Plan.
+`noclip agents install` refreshes them from the installed package, `noclip agents
+check` reports drift, and `noclip doctor` fails when they diverge.
+
+`noclip` is the default primary: it classifies a request, queues it or delegates
+to the owning role, and never writes code itself. The eight roles remain directly
+selectable for fine-tuning a single invocation.
+
+### Model policy
+
+| Tier | Agents | Model |
+|---|---|---|
+| Decide | `noclip` | `deepseek-v4-pro#high` |
+| Implement / analyse | `designer`, `scripter`, `qa`, `builder`, `asset-smith` | `deepseek-v4.1-flash#high` |
+| Mechanical | `librarian`, `audio`, `lore-keeper` | `deepseek-v4.1-flash#low` |
+
+Both are `opencode-go`. The tier is one line per agent file (`model:`); variants
+are validated, and an unknown variant fails loudly (`Variant unavailable …`)
+rather than silently running at default effort.
 
 A role's permissions are enforced, not advisory: `scripter` cannot write
 `place/`, `designer` cannot write `src/`, `qa` can only append to `50-log/`.
@@ -89,7 +109,7 @@ a race.
 
 Runs in the **main checkout**, never in a worktree, because Rojo is bound to this
 directory and Studio sees one filesystem. `noclip` takes
-`../noclip-vault/.locks/studio` for the duration; other studio tasks wait, and
+`../noclip-protocol-vault/.locks/studio` for the duration; other studio tasks wait, and
 give up after `lock_wait` seconds (default 600) and requeue.
 
 Rule of thumb: keep studio tasks small. A 20-minute mesh batch blocks every other

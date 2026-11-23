@@ -3,7 +3,7 @@ description: Dispatch queued vault tasks to their agents, or inspect the queue
 ---
 Read `docs/AGENTS-WORKFLOW.md` and the vault's `AGENTS.md` before acting.
 
-The vault is `../noclip-vault` (path in `.noclip`). Never move or re-status a
+The vault is `../noclip-protocol-vault` (path in `.noclip`). Never move or re-status a
 task note by hand: `noclip` owns the queue.
 
 If the user asked to run work:
