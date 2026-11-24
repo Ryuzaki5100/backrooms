@@ -15,14 +15,9 @@
 --
 -- Pure Luau: no Roblox APIs, so it runs under Lune.
 
-local function sibling(name: string): any
-	if script ~= nil then
-		return require((script :: any).Parent[name])
-	end
-	return (require :: any)("./" .. name)
-end
-
-local Version = sibling("Version")
+-- Two static requires instead of a computed path: luau-lsp cannot resolve
+-- `require("./" .. name)`, and a computed path also erases the module's types.
+local Version = if script ~= nil then require(script.Parent.Version) else require("./Version")
 
 local PlanCodec = {}
 

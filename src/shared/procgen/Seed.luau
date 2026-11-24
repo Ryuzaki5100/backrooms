@@ -28,7 +28,7 @@ end
 -- Returns (seed, nil) or (nil, errorMessage). Accepts lowercase, internal
 -- whitespace and a leading '#' so pasted codes just work.
 function Seed.parse(code: string): (number?, string?)
-	local cleaned = string.upper(string.gsub(code, "%s", ""))
+	local cleaned = string.upper((string.gsub(code, "%s", "")))
 	cleaned = string.gsub(cleaned, "^#", "")
 	if #cleaned == 0 then
 		return nil, "seed is empty"

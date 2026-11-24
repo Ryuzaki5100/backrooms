@@ -9,14 +9,9 @@
 -- Methods take an explicit `self` parameter so `rng:nextInt(6)` works, while
 -- the state stays in closures rather than fields.
 
-local function sibling(name: string): any
-	if script ~= nil then
-		return require((script :: any).Parent[name])
-	end
-	return (require :: any)("./" .. name)
-end
-
-local Hash = sibling("Hash")
+-- Two static requires instead of a computed path: luau-lsp cannot resolve
+-- `require("./" .. name)`, and a computed path also erases the module's types.
+local Hash = if script ~= nil then require(script.Parent.Hash) else require("./Hash")
 
 local MOD32 = 4294967296
 

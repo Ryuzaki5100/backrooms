@@ -17,17 +17,12 @@
 -- Canonical form is the codec's byte string, and `hash` fingerprints exactly
 -- those bytes. There is no second serialization to drift out of sync.
 
-local function sibling(name: string): any
-	if script ~= nil then
-		return require((script :: any).Parent[name])
-	end
-	return (require :: any)("./" .. name)
-end
-
-local Hash = sibling("Hash")
-local Version = sibling("Version")
-local Seed = sibling("Seed")
-local Codec = sibling("PlanCodec")
+-- Two static requires instead of a computed path: luau-lsp cannot resolve
+-- `require("./" .. name)`, and a computed path also erases the module's types.
+local Hash = if script ~= nil then require(script.Parent.Hash) else require("./Hash")
+local Version = if script ~= nil then require(script.Parent.Version) else require("./Version")
+local Seed = if script ~= nil then require(script.Parent.Seed) else require("./Seed")
+local Codec = if script ~= nil then require(script.Parent.PlanCodec) else require("./PlanCodec")
 
 export type Side = "N" | "E" | "S" | "W" | "U" | "D"
 export type Guard = "auto" | "open" | "sealed"
