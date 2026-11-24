@@ -70,6 +70,35 @@ export type Connector = {
 	params: { [string]: number },
 }
 
+export type Outcome = {
+	weight: number,
+	kind: string, -- level | node | class | void
+	level: string?,
+	node: number?,
+	predicate: string?,
+}
+
+export type Anchor = {
+	kind: string, -- spatial | object | actor | global
+	hostNode: number?,
+	hostEdge: number?,
+	surface: string?,
+	ref: string?,
+}
+
+export type Exit = {
+	id: string,
+	gate: string,
+	resolve: string, -- seed | run | event
+	anchor: Anchor,
+	outcomes: { Outcome },
+}
+
+export type Spawn = {
+	nodeId: number, -- 0 means unset (tooling/tests only)
+	surface: string,
+}
+
 export type Plan = {
 	schemaVersion: number,
 	genVersion: number,
@@ -79,6 +108,8 @@ export type Plan = {
 	nodes: { Node },
 	edges: { Edge },
 	connectors: { Connector },
+	exits: { Exit },
+	spawn: Spawn,
 }
 
 local Plan = {}
@@ -88,10 +119,12 @@ function Plan.new(
 	specId: string,
 	nodes: { Node }?,
 	edges: { Edge }?,
-	connectors: { Connector }?
+	connectors: { Connector }?,
+	exits: { Exit }?,
+	spawn: Spawn?
 ): Plan
 	return {
-		schemaVersion = Version.SCHEMA_VERSION,
+		schemaVersion = Version.PLAN_SCHEMA_VERSION,
 		genVersion = Version.GEN_VERSION,
 		macroEpoch = Version.MACRO_EPOCH,
 		seed = seed,
@@ -99,6 +132,8 @@ function Plan.new(
 		nodes = nodes or {},
 		edges = edges or {},
 		connectors = connectors or {},
+		exits = exits or {},
+		spawn = spawn or { nodeId = 0, surface = "floor" },
 	}
 end
 

@@ -36,6 +36,12 @@ local SIDES = { N = 1, E = 2, S = 3, W = 4, U = 5, D = 6 }
 local SIDE_BY_INDEX = { "N", "E", "S", "W", "U", "D" }
 local GUARDS = { auto = 1, open = 2, sealed = 3 }
 local GUARD_BY_INDEX = { "auto", "open", "sealed" }
+local ANCHORS = { spatial = 1, object = 2, actor = 3, global = 4 }
+local ANCHOR_BY_INDEX = { "spatial", "object", "actor", "global" }
+local OUTCOMES = { level = 1, node = 2, class = 3, void = 4 }
+local OUTCOME_BY_INDEX = { "level", "node", "class", "void" }
+local RESOLVES = { seed = 1, run = 2, event = 3 }
+local RESOLVE_BY_INDEX = { "seed", "run", "event" }
 
 -- ------------------------------------------------------------------ encoding
 
@@ -199,6 +205,67 @@ local function encodeConnector(connector: any): string
 	})
 end
 
+local function encodeSpawn(spawn: any): string
+	local value = spawn or { nodeId = 0, surface = "floor" }
+	return u16(value.nodeId or 0, "spawn.nodeId") .. str(value.surface or "", "spawn.surface")
+end
+
+local function encodeAnchor(anchor: any): string
+	local kindIndex = ANCHORS[anchor.kind]
+	if kindIndex == nil then
+		error(string.format("PlanCodec: unknown anchor kind %q", tostring(anchor.kind)), 3)
+	end
+	local hasNode = anchor.hostNode ~= nil and 1 or 0
+	local hasEdge = anchor.hostEdge ~= nil and 1 or 0
+	local parts = { u8(kindIndex, "anchor.kind"), u8(hasNode, "anchor.hasNode") }
+	if hasNode == 1 then
+		table.insert(parts, u16(anchor.hostNode, "anchor.hostNode"))
+	end
+	table.insert(parts, u8(hasEdge, "anchor.hasEdge"))
+	if hasEdge == 1 then
+		table.insert(parts, u16(anchor.hostEdge, "anchor.hostEdge"))
+	end
+	table.insert(parts, str(anchor.surface or "", "anchor.surface"))
+	table.insert(parts, str(anchor.ref or "", "anchor.ref"))
+	return table.concat(parts)
+end
+
+local function encodeOutcome(outcome: any): string
+	local kindIndex = OUTCOMES[outcome.kind]
+	if kindIndex == nil then
+		error(string.format("PlanCodec: unknown outcome kind %q", tostring(outcome.kind)), 3)
+	end
+	return table.concat({
+		u8(kindIndex, "outcome.kind"),
+		i32(outcome.weight, "outcome.weight"),
+		str(outcome.level or "", "outcome.level"),
+		u16(outcome.node or 0, "outcome.node"),
+		str(outcome.predicate or "", "outcome.predicate"),
+	})
+end
+
+local function encodeExit(exit: any): string
+	local kindIndex = RESOLVES[exit.resolve or "seed"]
+	if kindIndex == nil then
+		error(string.format("PlanCodec: unknown resolve mode %q", tostring(exit.resolve)), 3)
+	end
+	local outcomes = exit.outcomes or {}
+	if #outcomes > 4 then
+		error(string.format("PlanCodec: exit %s has too many outcomes", tostring(exit.id)), 3)
+	end
+	local parts = {
+		str(exit.id, "exit.id"),
+		str(exit.gate, "exit.gate"),
+		encodeAnchor(exit.anchor),
+		u8(kindIndex, "exit.resolve"),
+		u8(#outcomes, "exit.outcomes"),
+	}
+	for _, outcome in ipairs(outcomes) do
+		table.insert(parts, encodeOutcome(outcome))
+	end
+	return table.concat(parts)
+end
+
 function PlanCodec.encode(plan: any): string
 	local nodes: { any } = sortedById(plan.nodes or {})
 	local edges: { any } = sortedById(plan.edges or {})
@@ -233,6 +300,12 @@ function PlanCodec.encode(plan: any): string
 	table.insert(parts, u16(#connectors, "connectors.count"))
 	for _, connector in ipairs(connectors) do
 		table.insert(parts, encodeConnector(connector))
+	end
+	table.insert(parts, encodeSpawn(plan.spawn))
+	local exits: { any } = sortedById(plan.exits or {})
+	table.insert(parts, u16(#exits, "exits.count"))
+	for _, exit in ipairs(exits) do
+		table.insert(parts, encodeExit(exit))
 	end
 	return table.concat(parts)
 end
@@ -300,12 +373,12 @@ function PlanCodec.decode(buffer: string): any
 	end
 
 	local schemaVersion = readU16()
-	if schemaVersion ~= Version.SCHEMA_VERSION then
+	if schemaVersion ~= Version.PLAN_SCHEMA_VERSION then
 		error(
 			string.format(
 				"PlanCodec: unsupported schema version %d (this build understands %d)",
 				schemaVersion,
-				Version.SCHEMA_VERSION
+				Version.PLAN_SCHEMA_VERSION
 			),
 			2
 		)
@@ -320,6 +393,7 @@ function PlanCodec.decode(buffer: string): any
 		nodes = {},
 		edges = {},
 		connectors = {},
+		exits = {},
 	}
 
 	local nodeCount = readU16()
@@ -439,6 +513,89 @@ function PlanCodec.decode(buffer: string): any
 			)
 		end
 		table.insert(plan.connectors, connector)
+	end
+
+	local spawnNode = readU16()
+	local spawnSurface = readStr("spawn.surface")
+	plan.spawn = { nodeId = spawnNode, surface = spawnSurface }
+
+	local exitCount = readU16()
+	local seenExits: { [string]: boolean } = {}
+	for _ = 1, exitCount do
+		local exitId = readStr("exit.id")
+		if seenExits[exitId] then
+			error(string.format("PlanCodec: duplicate exit id %q", exitId), 2)
+		end
+		seenExits[exitId] = true
+		local gate = readStr("exit.gate")
+
+		local anchorKindIndex = readU8()
+		local anchorKind = ANCHOR_BY_INDEX[anchorKindIndex]
+		if anchorKind == nil then
+			error(string.format("PlanCodec: unknown anchor kind index %d", anchorKindIndex), 2)
+		end
+		local anchor: any = { kind = anchorKind }
+		if readU8() == 1 then
+			anchor.hostNode = readU16()
+		end
+		if readU8() == 1 then
+			anchor.hostEdge = readU16()
+		end
+		local surface = readStr("anchor.surface")
+		if surface ~= "" then
+			anchor.surface = surface
+		end
+		local ref = readStr("anchor.ref")
+		if ref ~= "" then
+			anchor.ref = ref
+		end
+
+		local resolveIndex = readU8()
+		local resolve = RESOLVE_BY_INDEX[resolveIndex]
+		if resolve == nil then
+			error(string.format("PlanCodec: unknown resolve index %d", resolveIndex), 2)
+		end
+
+		local outcomes = {}
+		local outcomeCount = readU8()
+		if outcomeCount > 4 then
+			error("PlanCodec: too many outcomes on an exit", 2)
+		end
+		for _ = 1, outcomeCount do
+			local outcomeKindIndex = readU8()
+			local outcomeKind = OUTCOME_BY_INDEX[outcomeKindIndex]
+			if outcomeKind == nil then
+				error(
+					string.format("PlanCodec: unknown outcome kind index %d", outcomeKindIndex),
+					2
+				)
+			end
+			local outcome: any = {
+				kind = outcomeKind,
+				weight = readI32(),
+			}
+			local level = readStr("outcome.level")
+			if level ~= "" then
+				outcome.level = level
+			end
+			local node = readU16()
+			if node ~= 0 then
+				outcome.node = node
+			end
+			local predicate = readStr("outcome.predicate")
+			if predicate ~= "" then
+				outcome.predicate = predicate
+			end
+			table.insert(outcomes, outcome)
+		end
+
+		table.insert(plan.exits, {
+			id = exitId,
+			gate = gate,
+			resolve = resolve,
+			anchor = anchor,
+			outcomes = outcomes,
+		})
 	end
 
 	if pos <= #buffer then

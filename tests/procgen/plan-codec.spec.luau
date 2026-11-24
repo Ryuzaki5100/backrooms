@@ -128,7 +128,7 @@ end)
 
 H.test("decoder rejects an unknown schema version", function()
 	local plan = table.clone(golden.plan)
-	plan.schemaVersion = Version.SCHEMA_VERSION + 1
+	plan.schemaVersion = Version.PLAN_SCHEMA_VERSION + 1
 	local bytes = PlanCodec.encode(plan)
 	rejects("schema version", function()
 		PlanCodec.decode(bytes)

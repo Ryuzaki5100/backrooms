@@ -184,11 +184,24 @@ function Schema.checkRelations(config: any): { string }
 				end
 				seen[id] = true
 			end
-			if transition.to == config.id then
-				table.insert(
-					errors,
-					"$.transitions[" .. (index - 1) .. "].to: a level cannot transition to itself"
-				)
+			local outcomes = transition.outcomes
+			if type(outcomes) == "table" then
+				for outcomeIndex, outcome in ipairs(outcomes) do
+					if
+						type(outcome) == "table"
+						and outcome.kind == "level"
+						and outcome.level == config.id
+					then
+						table.insert(
+							errors,
+							"$.transitions["
+								.. (index - 1)
+								.. "].outcomes["
+								.. (outcomeIndex - 1)
+								.. "]: a level cannot transition to itself"
+						)
+					end
+				end
 			end
 		end
 		if #transitions == 0 and config.dead_end ~= true then

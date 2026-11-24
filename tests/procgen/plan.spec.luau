@@ -23,7 +23,7 @@ end
 
 H.test("new stamps the schema, generator and macro versions", function()
 	local plan = Plan.new(42, "level-0")
-	H.eq(plan.schemaVersion, Version.SCHEMA_VERSION)
+	H.eq(plan.schemaVersion, Version.PLAN_SCHEMA_VERSION)
 	H.eq(plan.genVersion, Version.GEN_VERSION)
 	H.eq(plan.macroEpoch, Version.MACRO_EPOCH)
 	H.eq(plan.seed, 42)

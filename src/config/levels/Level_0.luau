@@ -6,6 +6,16 @@ return {
 	["dead_end"] = false,
 	["entities"] = {},
 	["generate"] = {
+		["connectorForms"] = {
+			{
+				["kind"] = "hole",
+				["weight"] = 70,
+			},
+			{
+				["kind"] = "shaft",
+				["weight"] = 30,
+			},
+		},
 		["deadEnds"] = 2,
 		["genMs"] = 1500,
 		["loops"] = 3,
@@ -50,7 +60,7 @@ return {
 			["weight"] = 1,
 		},
 	},
-	["schema"] = 1,
+	["schema"] = 2,
 	["source"] = {
 		["note"] = "60-lore/levels/level-0.md",
 		["revid"] = 1397338,
@@ -61,17 +71,47 @@ return {
 		{
 			["gate"] = "phase_wall",
 			["id"] = "l0.phase-wall",
-			["to"] = "level-1",
+			["outcomes"] = {
+				{
+					["kind"] = "level",
+					["level"] = "level-1",
+					["weight"] = 80,
+				},
+				{
+					["kind"] = "level",
+					["level"] = "level-0-1",
+					["weight"] = 20,
+				},
+			},
+			["resolve"] = "seed",
 		},
 		{
 			["gate"] = "trigger:vent",
 			["id"] = "l0.vent",
-			["to"] = "level-0-1",
+			["outcomes"] = {
+				{
+					["kind"] = "level",
+					["level"] = "level-0-1",
+					["weight"] = 100,
+				},
+			},
+			["resolve"] = "seed",
 		},
 		{
 			["gate"] = "trigger:glass_doors",
 			["id"] = "l0.glass-doors",
-			["to"] = "level-13",
+			["outcomes"] = {
+				{
+					["kind"] = "level",
+					["level"] = "level-13",
+					["weight"] = 70,
+				},
+				{
+					["kind"] = "void",
+					["weight"] = 30,
+				},
+			},
+			["resolve"] = "seed",
 		},
 	},
 }

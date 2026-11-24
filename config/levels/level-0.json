@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "id": "level-0",
   "title": "Level 0: The Lobby",
   "dead_end": false,
@@ -8,27 +8,101 @@
     "revid": 1397338
   },
   "generate": {
-    "regions": [8, 14],
+    "regions": [
+      8,
+      14
+    ],
     "tiles": 480,
     "genMs": 1500,
     "loops": 3,
     "deadEnds": 2,
-    "maxLevels": 2
+    "maxLevels": 2,
+    "connectorForms": [
+      {
+        "kind": "hole",
+        "weight": 70
+      },
+      {
+        "kind": "shaft",
+        "weight": 30
+      }
+    ]
   },
   "tileset": "lobby",
   "transitions": [
-    { "id": "l0.phase-wall", "to": "level-1", "gate": "phase_wall" },
-    { "id": "l0.vent", "to": "level-0-1", "gate": "trigger:vent" },
-    { "id": "l0.glass-doors", "to": "level-13", "gate": "trigger:glass_doors" }
+    {
+      "id": "l0.phase-wall",
+      "gate": "phase_wall",
+      "resolve": "seed",
+      "outcomes": [
+        {
+          "kind": "level",
+          "level": "level-1",
+          "weight": 80
+        },
+        {
+          "kind": "level",
+          "level": "level-0-1",
+          "weight": 20
+        }
+      ]
+    },
+    {
+      "id": "l0.vent",
+      "gate": "trigger:vent",
+      "resolve": "seed",
+      "outcomes": [
+        {
+          "kind": "level",
+          "level": "level-0-1",
+          "weight": 100
+        }
+      ]
+    },
+    {
+      "id": "l0.glass-doors",
+      "gate": "trigger:glass_doors",
+      "resolve": "seed",
+      "outcomes": [
+        {
+          "kind": "level",
+          "level": "level-13",
+          "weight": 70
+        },
+        {
+          "kind": "void",
+          "weight": 30
+        }
+      ]
+    }
   ],
   "style": null,
   "props": [
-    { "asset": "procedural:wall_outlet", "weight": 6, "anchor": "wall", "access": "walk" },
-    { "asset": "procedural:ceiling_vent", "weight": 2, "anchor": "ceiling", "access": "item:mask" },
-    { "asset": "procedural:void_room", "weight": 1, "anchor": "volume", "access": "sealed" }
+    {
+      "asset": "procedural:wall_outlet",
+      "weight": 6,
+      "anchor": "wall",
+      "access": "walk"
+    },
+    {
+      "asset": "procedural:ceiling_vent",
+      "weight": 2,
+      "anchor": "ceiling",
+      "access": "item:mask"
+    },
+    {
+      "asset": "procedural:void_room",
+      "weight": 1,
+      "anchor": "volume",
+      "access": "sealed"
+    }
   ],
   "hazards": [
-    { "id": "l0.fluorescent-hum", "kind": "ambient", "gain": -24 }
+    {
+      "id": "l0.fluorescent-hum",
+      "kind": "ambient",
+      "gain": -24
+    }
   ],
   "entities": [],
   "lighting": {

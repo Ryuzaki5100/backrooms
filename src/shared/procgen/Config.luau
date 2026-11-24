@@ -7,11 +7,21 @@
 -- Two static requires instead of a computed path: luau-lsp cannot resolve
 -- `require("./" .. name)`, and a computed path also erases the module's types.
 local Version = if script ~= nil then require(script.Parent.Version) else require("./Version")
+local Hash = if script ~= nil then require(script.Parent.Hash) else require("./Hash")
+
+export type Outcome = {
+	weight: number,
+	kind: string, -- level | node | class | void
+	level: string?,
+	node: number?,
+	predicate: string?,
+}
 
 export type Transition = {
 	id: string,
-	to: string,
 	gate: string,
+	resolve: string?, -- seed | run | event (default seed)
+	outcomes: { Outcome },
 }
 
 export type LevelConfig = {
@@ -40,6 +50,51 @@ export type LevelConfig = {
 
 local Config = {}
 
+-- Fingerprint of the generation-relevant projection of a config. Display text
+-- and style are excluded on purpose: rewriting a description must not change a
+-- layout's identity (ADR 0009 Q4).
+function Config.fingerprint(config: any): string
+	local parts: { string } = { tostring(config.schema), tostring(config.id) }
+	local generate = config.generate or {}
+	local regions = generate.regions or {}
+
+	parts[#parts + 1] = "r:" .. tostring(regions[1]) .. "," .. tostring(regions[2])
+	parts[#parts + 1] = "t:" .. tostring(generate.tiles)
+	parts[#parts + 1] = "g:" .. tostring(generate.genMs)
+	parts[#parts + 1] = "l:" .. tostring(generate.loops)
+	parts[#parts + 1] = "d:" .. tostring(generate.deadEnds or 0)
+	parts[#parts + 1] = "m:" .. tostring(generate.maxLevels or 1)
+
+	for _, form in ipairs(generate.connectorForms or {}) do
+		parts[#parts + 1] = "cf:" .. tostring(form.kind) .. ":" .. tostring(form.weight)
+	end
+
+	local transitions = table.clone(config.transitions or {})
+	table.sort(transitions, function(a: any, b: any)
+		return a.id < b.id
+	end)
+	for _, transition in ipairs(transitions) do
+		parts[#parts + 1] = table.concat({
+			"x",
+			transition.id,
+			transition.gate,
+			transition.resolve or "seed",
+		}, ":")
+		for _, outcome in ipairs(transition.outcomes or {}) do
+			parts[#parts + 1] = table.concat({
+				"o",
+				outcome.kind,
+				tostring(outcome.weight),
+				outcome.level or "",
+				tostring(outcome.node or 0),
+				outcome.predicate or "",
+			}, ":")
+		end
+	end
+
+	return Hash.of(table.concat(parts, "|"))
+end
+
 -- Returns a list of human-readable problems. Empty means loadable.
 function Config.verify(raw: any): { string }
 	local errors: { string } = {}
@@ -47,13 +102,13 @@ function Config.verify(raw: any): { string }
 	if type(raw) ~= "table" then
 		return { "config is not a table" }
 	end
-	if raw.schema ~= Version.SCHEMA_VERSION then
+	if raw.schema ~= Version.CONFIG_SCHEMA_VERSION then
 		table.insert(
 			errors,
 			string.format(
 				"schema version %s does not match runtime %d",
 				tostring(raw.schema),
-				Version.SCHEMA_VERSION
+				Version.CONFIG_SCHEMA_VERSION
 			)
 		)
 	end

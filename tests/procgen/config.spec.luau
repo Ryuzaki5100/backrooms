@@ -100,7 +100,7 @@ end)
 
 H.test("a level cannot transition to itself", function()
 	local broken = clone(level0)
-	broken.transitions[1].to = broken.id
+	broken.transitions[1].outcomes[1].level = broken.id
 	local errors = errorsFor(broken)
 	H.ok(joined(errors):find("cannot transition to itself", 1, true) ~= nil, joined(errors))
 end)
