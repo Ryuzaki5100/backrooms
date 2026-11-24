@@ -272,6 +272,34 @@ Hard rules: never force-push, never `reset --hard`, never delete files you did
 not create, never edit scripts inside Studio (Rojo will overwrite them), and
 never claim a sync succeeded without reading it back with `script_read`.
 
+### Verifying a sync — two traps that cost real time
+
+**1. Rojo can miss in-place rewrites.** Its watcher reliably picks up *new*
+files but has been observed to skip a rewritten existing module: the session had
+the new `PlanCodec` but kept the old `Plan` and `Version`. `touch` does not help —
+Rojo compares content, not mtime. Recovery: restart `devenv up`, reconnect the
+plugin, then read the content back. If the instance's `.Source` is current, the
+sync worked.
+
+**2. `execute_luau` probes share Lua's `require` cache.** After a good sync,
+`require(ReplicatedStorage.Procgen.Plan)` can still return the table cached by an
+earlier probe, making new functions look absent. Check `Instance.Source` first;
+if the source is new but `require` looks old, load fresh instances:
+
+```lua
+local P = game:GetService("ReplicatedStorage"):WaitForChild("Procgen")
+local probe = Instance.new("Folder")
+for _, name in ipairs({ "Hash", "Version", "Seed", "Plan", "PlanCodec" }) do
+	P:FindFirstChild(name):Clone().Parent = probe
+end
+local Plan = require(probe.Plan)
+-- assertions here
+probe:Destroy()
+```
+
+A play session (`start_stop_play`) also starts a fresh VM, but the clone probe is
+cheaper and does not disturb the place.
+
 Useful MCP tools: `list_roblox_studios`, `get_studio_state`, `search_game_tree`,
 `inspect_instance`, `script_read`, `script_grep`, `multi_edit` (prefer file
 edits), `execute_luau`, `start_stop_play`, `get_console_output`,
