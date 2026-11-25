@@ -29,7 +29,7 @@ return {
 			["vertical"] = 2,
 		},
 		["loops"] = 4,
-		["maxLevels"] = 2,
+		["maxLevels"] = 1,
 		["regions"] = {
 			14,
 			22,

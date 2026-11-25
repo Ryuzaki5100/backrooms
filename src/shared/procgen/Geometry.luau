@@ -2,29 +2,35 @@
 
 -- Geometry description: turn an embedded plan into a list of boxes.
 --
--- Deliberately pure — no Roblox APIs — so it runs under Lune, is hashable, and
--- can be asserted on without a DataModel. `Build.luau` is the thin layer that
--- turns these boxes into Parts (ADR 0011).
+-- Pure — no Roblox APIs — so it runs under Lune and is hashable. `Build.luau`
+-- only applies these boxes (ADR 0011).
 --
--- Ownership rule (the double-wall fix): a boundary shared by two nodes is owned
--- by the EDGE and built once. A node only builds walls on sides it does not
--- share. Result: exactly one wall per boundary, one opening, no tunnel.
+-- Wall rule (the leak fix): every face is covered by intervals.
 --
--- Variables that belong to a level's art (materials, wall thickness, opening
--- sizes, budget) come from `config.style`; M17 replaces the provisional defaults
--- below with the authored schema. The field names are the contract.
+--   * a face's span is split into the parts shared with neighbours and the rest;
+--   * the node builds walls over "the rest";
+--   * each edge builds a wall over exactly its shared interval, with the door
+--     opening in it.
+--
+-- That way a boundary is built once, no part of any face is left open, and two
+-- differently sized rooms touching along one wall cannot leave a gap. It also
+-- removes the old "a side is shared, so skip it" assumption, which leaked
+-- whenever the neighbour was narrower.
+--
+-- No vertical placeholder geometry: v1 content is single-floor (ADR 0016), and
+-- real connectors are M08b.
 
 local Hash = if script ~= nil then require(script.Parent.Hash) else require("./Hash")
 
 local Geometry = {}
 
-local SIDES = { "N", "E", "S", "W" }
-local INDEX = { N = 1, E = 2, S = 3, W = 4 }
+local MIN_OPENING = 2
 
--- Provisional style defaults. Field names are the contract (M17 fills them).
+local SIDES = { "N", "E", "S", "W" }
+
 local DEFAULT_STYLE = {
 	wallThickness = 1,
-	budget = { parts = 800 },
+	budget = { parts = 1200 },
 	materials = {
 		wall = { material = "Concrete", color = { 0.52, 0.5, 0.44 } },
 		floor = { material = "Fabric", color = { 0.33, 0.3, 0.24 } },
@@ -51,21 +57,6 @@ local function styleOf(options: any): any
 			trim = materials.trim or defaults.trim,
 		},
 	}
-end
-
-local function effectiveSide(side: string, rotation: number): string
-	local start = INDEX[side]
-	if start == nil then
-		return side
-	end
-	return SIDES[((start - 1 + rotation) % 4) + 1]
-end
-
-local function worldExtents(node: any): (number, number)
-	if (node.rotation or 0) % 2 == 0 then
-		return node.w, node.d
-	end
-	return node.d, node.w
 end
 
 local function box(
@@ -96,182 +87,196 @@ local function box(
 	table.insert(parts, part)
 end
 
--- A wall on one face of a node, cut around a centred opening.
-local function emitWall(
+-- Interval helpers -----------------------------------------------------------
+
+local function complement(
+	span: number,
+	intervals: { { start: number, len: number } }
+): { { start: number, len: number } }
+	table.sort(intervals, function(a, b)
+		return a.start < b.start
+	end)
+	local gaps = {}
+	local cursor = 0
+	for _, interval in ipairs(intervals) do
+		local start = math.max(cursor, interval.start)
+		if start > cursor then
+			table.insert(gaps, { start = cursor, len = start - cursor })
+		end
+		cursor = math.max(cursor, interval.start + interval.len)
+	end
+	if cursor < span then
+		table.insert(gaps, { start = cursor, len = span - cursor })
+	end
+	return gaps
+end
+
+local function faceSpan(node: any, side: string): number
+	if side == "N" or side == "S" then
+		return node.w
+	end
+	return node.d
+end
+
+local function faceOrigin(node: any, side: string): number
+	if side == "N" or side == "S" then
+		return node.x
+	end
+	return node.z
+end
+
+-- Where a neighbour sits on this node's face, relative to the face origin.
+local function overlapOn(node: any, side: string, other: any): (number?, number?)
+	local origin = faceOrigin(node, side)
+	local span = faceSpan(node, side)
+	local otherOrigin = faceOrigin(other, side)
+	local otherSpan = faceSpan(other, side)
+	local start = math.max(origin, otherOrigin)
+	local finish = math.min(origin + span, otherOrigin + otherSpan)
+	local len = finish - start
+	if len < MIN_OPENING then
+		return nil, nil
+	end
+	return start - origin, len
+end
+
+-- Wall boxes -----------------------------------------------------------------
+
+-- One wall slice on `side`, spanning [start, start+len] of the face and
+-- [bottom, top] vertically.
+local function wallSlice(
 	parts: { any },
 	owner: string,
-	worldSide: string,
 	node: any,
+	side: string,
+	start: number,
+	len: number,
+	bottom: number,
+	top: number,
 	thickness: number,
-	material: any,
-	opening: any? -- { width, height, elevation }
+	material: any
 ): ()
-	local W, D = worldExtents(node)
-	local width = if worldSide == "N" or worldSide == "S" then W else D
-	local height = node.h
-	local minX, minZ = node.x, node.z
-
-	local function segment(start: number, length: number, bottom: number, top: number)
-		if length <= 0 or top <= bottom then
-			return
-		end
-		local center = start + length / 2
-		local y = node.y + (bottom + top) / 2
-		local sizeX = if worldSide == "N" or worldSide == "S" then length else thickness
-		local sizeZ = if worldSide == "N" or worldSide == "S" then thickness else length
-		local x = if worldSide == "N" or worldSide == "S" then minX + center else minX
-		local z = if worldSide == "N" or worldSide == "S" then minZ else minZ + center
-		if worldSide == "N" then
-			z = minZ
-		elseif worldSide == "S" then
-			z = minZ + D
-		elseif worldSide == "W" then
-			x = minX
-		elseif worldSide == "E" then
-			x = minX + W
-		end
-		box(parts, "wall", owner, { sizeX, top - bottom, sizeZ }, { x, y, z }, material)
-	end
-
-	if opening == nil then
-		-- Whole wall, thickness centred on the face plane.
-		segment(0, width, 0, height)
+	if len <= 0 or top <= bottom then
 		return
 	end
+	local centre = start + len / 2
+	local y = node.y + (bottom + top) / 2
+	local sizeX = if side == "N" or side == "S" then len else thickness
+	local sizeZ = if side == "N" or side == "S" then thickness else len
+	local x = if side == "N" or side == "S" then node.x + centre else node.x
+	local z = if side == "N" or side == "S" then node.z else node.z + centre
+	if side == "N" then
+		z = node.z
+	elseif side == "S" then
+		z = node.z + node.d
+	elseif side == "W" then
+		x = node.x
+	elseif side == "E" then
+		x = node.x + node.w
+	end
+	box(parts, "wall", owner, { sizeX, top - bottom, sizeZ }, { x, y, z }, material)
+end
 
-	local w = math.min(opening.width, width)
-	local h = math.min(opening.height, height)
-	local sill = math.max(0, math.min(opening.elevation or 0, height - h))
-	local start = (width - w) / 2
+local function solidWall(
+	parts: { any },
+	owner: string,
+	node: any,
+	side: string,
+	start: number,
+	len: number,
+	thickness: number,
+	material: any
+): ()
+	wallSlice(parts, owner, node, side, start, len, 0, node.h, thickness, material)
+end
 
-	segment(0, start, 0, height)
-	segment(start + w, width - (start + w), 0, height)
-	segment(start, w, sill + h, height) -- header
+-- A shared wall over one overlap interval, with the doorway cut in the middle.
+local function doorway(
+	parts: { any },
+	owner: string,
+	node: any,
+	side: string,
+	start: number,
+	len: number,
+	thickness: number,
+	material: any,
+	opening: any
+): ()
+	local width = math.min(opening.width, len - 2 * MIN_OPENING)
+	if width < MIN_OPENING then
+		-- Too narrow for a door: build a solid wall rather than leak.
+		solidWall(parts, owner, node, side, start, len, thickness, material)
+		return
+	end
+	local height = math.min(opening.height, node.h)
+	local sill = math.max(0, math.min(opening.elevation or 0, node.h - height))
+	local doorStart = start + (len - width) / 2
+
+	wallSlice(parts, owner, node, side, start, doorStart - start, 0, node.h, thickness, material)
+	wallSlice(
+		parts,
+		owner,
+		node,
+		side,
+		doorStart + width,
+		start + len - (doorStart + width),
+		0,
+		node.h,
+		thickness,
+		material
+	)
+	wallSlice(
+		parts,
+		owner,
+		node,
+		side,
+		doorStart,
+		width,
+		sill + height,
+		node.h,
+		thickness,
+		material
+	)
 	if sill > 0 then
-		segment(start, w, 0, sill) -- sill / parapet
+		wallSlice(parts, owner, node, side, doorStart, width, 0, sill, thickness, material)
 	end
 end
 
--- A floor or ceiling slab, optionally with one centred hole.
+-- Slabs ----------------------------------------------------------------------
+
 local function emitSlab(
 	parts: { any },
 	owner: string,
 	kind: string,
 	node: any,
 	thickness: number,
-	material: any,
-	hole: any? -- { width }
+	material: any
 ): ()
-	local W, D = worldExtents(node)
 	local y = if kind == "floor" then node.y + thickness / 2 else node.y + node.h - thickness / 2
-	local minX, minZ = node.x, node.z
-
-	if hole == nil then
-		box(parts, kind, owner, { W, thickness, D }, { minX + W / 2, y, minZ + D / 2 }, material)
-		return
-	end
-
-	local hw = math.min(hole.width, W)
-	local hd = math.min(hole.width, D)
-	local westEdge = (W - hw) / 2
-	local eastEdge = (W + hw) / 2
-	local northEdge = (D - hd) / 2
-	local southEdge = (D + hd) / 2
-
-	-- North and south strips span the full width.
 	box(
 		parts,
 		kind,
 		owner,
-		{ W, thickness, northEdge },
-		{ minX + W / 2, y, minZ + northEdge / 2 },
-		material
-	)
-	box(
-		parts,
-		kind,
-		owner,
-		{ W, thickness, D - southEdge },
-		{ minX + W / 2, y, minZ + (D + southEdge) / 2 },
-		material
-	)
-	-- East and west strips fill the hole's depth only.
-	box(
-		parts,
-		kind,
-		owner,
-		{ westEdge, thickness, hd },
-		{ minX + westEdge / 2, y, minZ + D / 2 },
-		material
-	)
-	box(
-		parts,
-		kind,
-		owner,
-		{ W - eastEdge, thickness, hd },
-		{ minX + (W + eastEdge) / 2, y, minZ + D / 2 },
+		{ node.w, thickness, node.d },
+		{ node.x + node.w / 2, y, node.z + node.d / 2 },
 		material
 	)
 end
 
-local function partCount(parts: { any }): number
-	return #parts
-end
+-- Description ----------------------------------------------------------------
 
 function Geometry.describe(plan: any, options: any?): { any }
 	local style = styleOf(options)
 	local debug = options ~= nil and options.debug == true
 	local parts: { any } = {}
 	local nodesById: { [number]: any } = {}
-	local sharedSides: { [string]: boolean } = {}
 
 	for _, node in ipairs(plan.nodes) do
 		nodesById[node.id] = node
 	end
 
-	-- Which local sides are shared (owned by an edge)?
-	local verticalPorts: { [number]: any } = {}
-	for _, edge in ipairs(plan.edges) do
-		local a = nodesById[edge.a]
-		local b = nodesById[edge.b]
-		if a ~= nil and b ~= nil then
-			local aPort = a.ports[edge.aPort]
-			local bPort = b.ports[edge.bPort]
-			if aPort ~= nil and bPort ~= nil then
-				if a.level == b.level then
-					sharedSides[a.id .. ":" .. aPort.side] = true
-					sharedSides[b.id .. ":" .. bPort.side] = true
-				else
-					local lower = if a.level < b.level then a else b
-					local lowerPort = if lower == a then aPort else bPort
-					verticalPorts[lower.id] = lowerPort
-				end
-			end
-		end
-	end
-
-	-- Shells: floor, ceiling, and the walls this node owns.
-	for _, node in ipairs(plan.nodes) do
-		local owner = "node:" .. tostring(node.id)
-		local hole = verticalPorts[node.id]
-		emitSlab(parts, owner, "floor", node, style.wallThickness, style.materials.floor, hole)
-		emitSlab(parts, owner, "ceiling", node, style.wallThickness, style.materials.ceiling, hole)
-		for _, side in ipairs(SIDES) do
-			if not sharedSides[node.id .. ":" .. side] then
-				emitWall(
-					parts,
-					owner,
-					effectiveSide(side, node.rotation or 0),
-					node,
-					style.wallThickness,
-					style.materials.wall,
-					nil
-				)
-			end
-		end
-	end
-
-	-- Edges own their shared walls: exactly one per boundary.
+	-- Gather shared intervals per node and side.
+	local shared: { [string]: { any } } = {}
 	for _, edge in ipairs(plan.edges) do
 		local a = nodesById[edge.a]
 		local b = nodesById[edge.b]
@@ -279,63 +284,101 @@ function Geometry.describe(plan: any, options: any?): { any }
 			local aPort = a.ports[edge.aPort]
 			local bPort = b.ports[edge.bPort]
 			if aPort ~= nil and bPort ~= nil then
-				local side = effectiveSide(aPort.side, a.rotation or 0)
-				local opening = {
-					width = math.min(aPort.width, bPort.width),
-					height = math.min(aPort.height, bPort.height),
-					elevation = math.min(aPort.elevation, bPort.elevation),
-				}
-				emitWall(
+				for _, pair in ipairs({
+					{
+						node = a,
+						side = aPort.side,
+						other = b,
+						port = aPort,
+						otherPort = bPort,
+						edge = edge,
+					},
+				}) do
+					local key = pair.node.id .. ":" .. pair.side
+					shared[key] = shared[key] or {}
+					local start, len = overlapOn(pair.node, pair.side, pair.other)
+					if start ~= nil and len ~= nil then
+						table.insert(shared[key], {
+							start = start,
+							len = len,
+							edge = edge,
+							port = pair.port,
+							otherPort = pair.otherPort,
+						})
+					end
+				end
+			end
+		end
+	end
+
+	-- Node walls: the complement of its shared intervals on each side.
+	for _, node in ipairs(plan.nodes) do
+		local owner = "node:" .. tostring(node.id)
+		emitSlab(parts, owner, "floor", node, style.wallThickness, style.materials.floor)
+		emitSlab(parts, owner, "ceiling", node, style.wallThickness, style.materials.ceiling)
+
+		for _, side in ipairs(SIDES) do
+			local span = faceSpan(node, side)
+			local intervals = shared[node.id .. ":" .. side] or {}
+			local occupied = {}
+			for _, interval in ipairs(intervals) do
+				table.insert(occupied, { start = interval.start, len = interval.len })
+			end
+			for _, gap in ipairs(complement(span, occupied)) do
+				solidWall(
 					parts,
-					"edge:" .. tostring(edge.id),
+					owner,
+					node,
 					side,
-					a,
+					gap.start,
+					gap.len,
 					style.wallThickness,
-					style.materials.wall,
-					opening
+					style.materials.wall
 				)
 			end
 		end
 	end
 
-	-- Vertical links: a placeholder ramp, explicitly temporary (M08b replaces).
+	-- Edge walls: exactly the shared interval, with the doorway in it.
 	for _, edge in ipairs(plan.edges) do
 		local a = nodesById[edge.a]
 		local b = nodesById[edge.b]
-		if a ~= nil and b ~= nil and a.level ~= b.level then
-			local lower = if a.level < b.level then a else b
-			local upper = if lower == a then b else a
-			local rise = upper.y - lower.y
-			if rise > 0 then
-				local run = math.max(8, rise * 1.4)
-				local thick = 1
-				local centerX = lower.x + select(1, worldExtents(lower)) / 2 + run / 2
-				local centerZ = lower.z + select(2, worldExtents(lower)) / 2
-				local pitch = -math.deg(math.atan2(rise, run))
-				box(
-					parts,
-					"ramp",
-					"edge:" .. tostring(edge.id),
-					{ math.sqrt(run * run + rise * rise), thick, 6 },
-					{ centerX, lower.y + rise / 2, centerZ },
-					style.materials.trim,
-					{ pitch = pitch, tag = "placeholder" }
-				)
+		if a ~= nil and b ~= nil and a.level == b.level then
+			local aPort = a.ports[edge.aPort]
+			local bPort = b.ports[edge.bPort]
+			if aPort ~= nil and bPort ~= nil then
+				local start, len = overlapOn(a, aPort.side, b)
+				if start ~= nil and len ~= nil then
+					doorway(
+						parts,
+						"edge:" .. tostring(edge.id),
+						a,
+						aPort.side,
+						start,
+						len,
+						style.wallThickness,
+						style.materials.wall,
+						{
+							width = math.min(aPort.width, bPort.width),
+							height = math.min(aPort.height, bPort.height),
+							elevation = math.min(aPort.elevation, bPort.elevation),
+						}
+					)
+				end
 			end
 		end
 	end
 
-	-- QA-only markers. Never part of a production description (ADR 0011).
+	-- QA-only markers (ADR 0011). Never part of a production description.
 	if debug then
 		local spawn = nodesById[plan.spawn.nodeId]
 		if spawn ~= nil then
-			local W, D = worldExtents(spawn)
 			box(
 				parts,
 				"marker",
 				"spawn",
 				{ 2, 2, 2 },
-				{ spawn.x + W / 2, spawn.y + 3, spawn.z + D / 2 },
+				{ spawn.x + spawn.w / 2, spawn.y + 3, spawn.z + spawn.d / 2 },
 				{ material = "Neon", color = { 0.2, 1, 0.4 } },
 				{ canCollide = false, tag = "qa" }
 			)
@@ -343,13 +386,12 @@ function Geometry.describe(plan: any, options: any?): { any }
 		for _, exit in ipairs(plan.exits) do
 			local host = exit.anchor.hostNode and nodesById[exit.anchor.hostNode]
 			if host ~= nil then
-				local W, D = worldExtents(host)
 				box(
 					parts,
 					"marker",
 					"exit:" .. tostring(exit.id),
 					{ 1.5, 1.5, 1.5 },
-					{ host.x + W / 2, host.y + host.h - 2, host.z + D / 2 },
+					{ host.x + host.w / 2, host.y + host.h - 2, host.z + host.d / 2 },
 					{ material = "Neon", color = { 1, 0.4, 0.2 } },
 					{ canCollide = false, tag = "qa" }
 				)
@@ -357,11 +399,11 @@ function Geometry.describe(plan: any, options: any?): { any }
 		end
 	end
 
-	if partCount(parts) > style.budget then
+	if #parts > style.budget then
 		error(
 			string.format(
 				"Geometry.describe: %d parts exceeds the budget of %d",
-				partCount(parts),
+				#parts,
 				style.budget
 			),
 			2
@@ -371,7 +413,6 @@ function Geometry.describe(plan: any, options: any?): { any }
 	return parts
 end
 
--- Deterministic fingerprint of a description, so Lune and Studio can be compared.
 function Geometry.fingerprint(parts: { any }): string
 	local lines = {}
 	for _, part in ipairs(parts) do

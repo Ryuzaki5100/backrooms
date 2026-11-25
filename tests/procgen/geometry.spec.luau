@@ -11,9 +11,9 @@ local OPTIONS = {
 	loopPreference = Level0.generate.loopPreference,
 }
 
-local function build(seed: number, options: any?): ({ any }, any)
+local function build(seed: number, styleOptions: any?): ({ any }, any)
 	local plan = Embedding.embed(Macro.build(Level0, seed), OPTIONS)
-	return Geometry.describe(plan, options), plan
+	return Geometry.describe(plan, styleOptions), plan
 end
 
 local function count(parts: { any }, predicate: (any) -> boolean): number
@@ -26,18 +26,71 @@ local function count(parts: { any }, predicate: (any) -> boolean): number
 	return total
 end
 
-H.test("describes a plan within budget", function()
+local SIDES = { "N", "E", "S", "W" }
+
+local function span(node: any, side: string): number
+	return if side == "N" or side == "S" then node.w else node.d
+end
+
+local function origin(node: any, side: string): number
+	return if side == "N" or side == "S" then node.x else node.z
+end
+
+local function onFace(part: any, node: any, side: string): boolean
+	if side == "N" then
+		return math.abs(part.position[3] - node.z) < 0.6
+	elseif side == "S" then
+		return math.abs(part.position[3] - (node.z + node.d)) < 0.6
+	elseif side == "W" then
+		return math.abs(part.position[1] - node.x) < 0.6
+	end
+	return math.abs(part.position[1] - (node.x + node.w)) < 0.6
+end
+
+local function interval(part: any, node: any, side: string): (number, number)
+	local base = origin(node, side)
+	if side == "N" or side == "S" then
+		return part.position[1] - part.size[1] / 2 - base,
+			part.position[1] + part.size[1] / 2 - base
+	end
+	return part.position[3] - part.size[3] / 2 - base, part.position[3] + part.size[3] / 2 - base
+end
+
+-- Union length of a set of intervals.
+local function unionLength(intervals: { { number } }): number
+	table.sort(intervals, function(a, b)
+		return a[1] < b[1]
+	end)
+	local total = 0
+	local cursor = -math.huge
+	for _, item in ipairs(intervals) do
+		local start = math.max(item[1], cursor)
+		if item[2] > start then
+			total += item[2] - start
+			cursor = item[2]
+		end
+	end
+	return total
+end
+
+H.test("describes a plan within budget and without ramps", function()
 	local parts = build(42)
 	H.ok(#parts > 0, "has parts")
-	H.ok(#parts <= 800, "within the default budget")
+	H.ok(#parts <= 1200, "within budget")
+	H.eq(
+		count(parts, function(p)
+			return p.kind == "ramp"
+		end),
+		0,
+		"no placeholder ramps"
+	)
 end)
 
 H.test("description is deterministic", function()
 	local a, plan = build(42)
 	local b = Geometry.describe(plan, nil)
-	H.eq(Geometry.fingerprint(a), Geometry.fingerprint(b), "same plan, same parts")
-	local c = build(43)
-	H.neq(Geometry.fingerprint(a), Geometry.fingerprint(c), "different seed differs")
+	H.eq(Geometry.fingerprint(a), Geometry.fingerprint(b))
+	H.neq(Geometry.fingerprint(a), Geometry.fingerprint((build(43))), "different seed differs")
 end)
 
 H.test("every node gets a floor and a ceiling", function()
@@ -46,80 +99,78 @@ H.test("every node gets a floor and a ceiling", function()
 		local owner = "node:" .. tostring(node.id)
 		H.ok(count(parts, function(p)
 			return p.owner == owner and p.kind == "floor"
-		end) >= 1, "floor for node " .. tostring(node.id))
+		end) >= 1, "floor " .. tostring(node.id))
 		H.ok(count(parts, function(p)
 			return p.owner == owner and p.kind == "ceiling"
-		end) >= 1, "ceiling for node " .. tostring(node.id))
+		end) >= 1, "ceiling " .. tostring(node.id))
 	end
 end)
 
-H.test("shared boundaries are owned by the edge, never by both nodes", function()
+-- The leak test: walls plus doorways must cover every face completely.
+H.test("every face is covered by walls plus doorways", function()
 	local parts, plan = build(42)
-	local horizontal = 0
-	for _, edge in ipairs(plan.edges) do
-		local a = nil
-		local b = nil
-		for _, node in ipairs(plan.nodes) do
-			if node.id == edge.a then
-				a = node
-			elseif node.id == edge.b then
-				b = node
-			end
-		end
-		if a and b and a.level == b.level then
-			horizontal += 1
-			H.ok(count(parts, function(p)
-				return p.owner == "edge:" .. tostring(edge.id) and p.kind == "wall"
-			end) >= 1, "edge " .. tostring(edge.id) .. " owns a wall")
-		end
-	end
-	H.ok(horizontal > 0, "fixture has horizontal edges")
-end)
-
-H.test("no wall is built by a node on a side it shares", function()
-	local parts, plan = build(42)
-	-- Each node's free sides produce walls; shared sides are edge-owned. Count
-	-- total walls as free sides + horizontal edges and compare.
-	local shared: { [string]: boolean } = {}
-	local horizontal = 0
-	for _, edge in ipairs(plan.edges) do
-		local a = nil
-		local b = nil
-		for _, node in ipairs(plan.nodes) do
-			if node.id == edge.a then
-				a = node
-			elseif node.id == edge.b then
-				b = node
-			end
-		end
-		if a and b and a.level == b.level then
-			horizontal += 1
-			local aPort = a.ports[edge.aPort]
-			local bPort = b.ports[edge.bPort]
-			if aPort and bPort then
-				shared[a.id .. ":" .. aPort.side] = true
-				shared[b.id .. ":" .. bPort.side] = true
-			end
-		end
-	end
-	local freeSides = 0
+	local nodesById: { [number]: any } = {}
 	for _, node in ipairs(plan.nodes) do
-		for _, side in ipairs({ "N", "E", "S", "W" }) do
-			if not shared[node.id .. ":" .. side] then
-				freeSides += 1
+		nodesById[node.id] = node
+	end
+
+	for _, node in ipairs(plan.nodes) do
+		for _, side in ipairs(SIDES) do
+			local width = span(node, side)
+			local intervals = {}
+			local doorWidth = 0
+
+			for _, part in ipairs(parts) do
+				if part.kind == "wall" and onFace(part, node, side) then
+					local isNodeWall = part.owner == "node:" .. tostring(node.id)
+					local edgeId = nil
+					if string.sub(part.owner, 1, 5) == "edge:" then
+						edgeId = tonumber(string.sub(part.owner, 6))
+					end
+					local belongsToEdge = false
+					if edgeId ~= nil then
+						for _, edge in ipairs(plan.edges) do
+							if edge.id == edgeId and (edge.a == node.id or edge.b == node.id) then
+								belongsToEdge = true
+								break
+							end
+						end
+					end
+					if isNodeWall or belongsToEdge then
+						local start, finish = interval(part, node, side)
+						-- Door headers sit above the door; they still cover the face.
+						table.insert(intervals, { start, finish })
+					end
+				end
 			end
+
+			-- Count doorway gaps implied by edges on this side.
+			for _, edge in ipairs(plan.edges) do
+				if edge.a == node.id or edge.b == node.id then
+					local portId = if edge.a == node.id then edge.aPort else edge.bPort
+					local port = node.ports[portId]
+					if port ~= nil and port.side == side then
+						doorWidth += port.width
+					end
+				end
+			end
+
+			-- A doorway has a header, so the wall projection must cover the whole
+			-- face. Anything less is a hole to the outside.
+			local covered = unionLength(intervals)
+			H.ok(
+				math.abs(covered - width) < 1.0,
+				string.format(
+					"node %d side %s: covered %.1f of span %.1f (doors %.1f)",
+					node.id,
+					side,
+					covered,
+					width,
+					doorWidth
+				)
+			)
 		end
 	end
-	-- Walls are segmented (openings create 2+ pieces), so the edge-owned count is
-	-- a lower bound; what matters is that node-owned walls never exceed free sides.
-	local nodeWalls = count(parts, function(p)
-		return p.kind == "wall" and string.sub(p.owner, 1, 5) == "node:"
-	end)
-	H.ok(
-		nodeWalls <= freeSides,
-		"node-owned walls (" .. nodeWalls .. ") <= free sides (" .. freeSides .. ")"
-	)
-	H.ok(horizontal > 0, "has horizontal edges")
 end)
 
 H.test("QA markers exist only when debug is on", function()
@@ -129,20 +180,10 @@ H.test("QA markers exist only when debug is on", function()
 			return p.tag == "qa"
 		end),
 		0,
-		"production has no QA parts"
+		"production has none"
 	)
-
 	local debug = build(42, { debug = true })
 	H.ok(count(debug, function(p)
 		return p.tag == "qa"
-	end) > 0, "debug has QA parts")
-end)
-
-H.test("placeholders are tagged and never collide with gameplay tags", function()
-	local parts = build(42)
-	for _, part in ipairs(parts) do
-		if part.kind == "ramp" then
-			H.eq(part.tag, "placeholder", "ramps are placeholders")
-		end
-	end
+	end) > 0, "debug has some")
 end)

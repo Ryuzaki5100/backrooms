@@ -16,7 +16,7 @@
     "genMs": 1500,
     "loops": 4,
     "deadEnds": 3,
-    "maxLevels": 2,
+    "maxLevels": 1,
     "connectorForms": [
       {
         "kind": "hole",
