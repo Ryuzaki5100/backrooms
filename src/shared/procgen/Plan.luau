@@ -45,6 +45,10 @@ export type Node = {
 	h: number,
 	d: number,
 	level: number,
+	x: number,
+	y: number,
+	z: number,
+	rotation: number, -- yaw in 90-degree steps; port sides are relative to it
 	filler: string,
 	params: { [string]: number },
 	ports: { Port },
@@ -105,6 +109,8 @@ export type Plan = {
 	macroEpoch: number,
 	seed: number,
 	specId: string,
+	floorHeight: number,
+	plenum: number,
 	nodes: { Node },
 	edges: { Edge },
 	connectors: { Connector },
@@ -121,7 +127,9 @@ function Plan.new(
 	edges: { Edge }?,
 	connectors: { Connector }?,
 	exits: { Exit }?,
-	spawn: Spawn?
+	spawn: Spawn?,
+	floorHeight: number?,
+	plenum: number?
 ): Plan
 	return {
 		schemaVersion = Version.PLAN_SCHEMA_VERSION,
@@ -129,6 +137,8 @@ function Plan.new(
 		macroEpoch = Version.MACRO_EPOCH,
 		seed = seed,
 		specId = specId,
+		floorHeight = floorHeight or 0,
+		plenum = plenum or 0,
 		nodes = nodes or {},
 		edges = edges or {},
 		connectors = connectors or {},

@@ -99,6 +99,10 @@ local function makeNode(rng: any, id: number, kind: string, level: number): any
 		h = size.h,
 		d = randBetween(rng, size.d[1], size.d[2]),
 		level = level,
+		x = 0,
+		y = 0,
+		z = 0,
+		rotation = 0,
 		filler = FILLER[kind] or "wfc",
 		params = {},
 		ports = {},
@@ -108,11 +112,13 @@ end
 
 local function addPort(node: any, side: string, kind: string): number
 	local elevated = side == "U" or side == "D"
+	local width = if elevated then 3 else 4
+	local span = if elevated then 0 elseif side == "N" or side == "S" then node.w else node.d
 	local port = {
 		id = #node.ports + 1,
 		side = side,
-		offset = 0,
-		width = if elevated then 3 else 4,
+		offset = if elevated then 0 else math.max(0, math.floor((span - width) / 2)),
+		width = width,
 		elevation = 0,
 		kind = kind,
 		guard = "auto",

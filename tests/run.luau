@@ -9,6 +9,7 @@ require("./procgen/seed.spec")
 require("./procgen/plan.spec")
 require("./procgen/plan-codec.spec")
 require("./procgen/macro.spec")
+require("./procgen/embedding.spec")
 require("./procgen/config.spec")
 
 process.exit(Harness.run())
