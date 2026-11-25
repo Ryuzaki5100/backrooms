@@ -113,10 +113,6 @@ H.test("a 18x18 chunk stays inside the part budget", function()
 	H.ok(#parts <= 200, "dense chunk parts: " .. #parts)
 end)
 
-local function heightOf(part: any): number
-	return part.size[2]
-end
-
 H.test("an open height step gets a soffit, a sealed one does not", function()
 	local layout = empty(6, 16)
 	for j = 1, 6 do
