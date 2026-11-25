@@ -243,6 +243,17 @@ return {
 			["parts"] = 6000,
 		},
 	},
+	["templates"] = {
+		{
+			["count"] = 1,
+			["footprint"] = {
+				["d"] = 3,
+				["w"] = 3,
+			},
+			["ref"] = "manila",
+			["spacing"] = 6,
+		},
+	},
 	["tileset"] = "lobby",
 	["title"] = "Level 0: The Lobby",
 	["transitions"] = {

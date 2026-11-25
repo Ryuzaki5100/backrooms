@@ -7,12 +7,14 @@
 -- Two kinds of pass:
 --   * base passes run for every cell world (Terrain applies floor heights and
 --     headroom even when the level is flat);
---   * gated features run only when the config lists them (Structures).
+--   * gated features run only when the config lists them (Structures,
+--     Template).
 
 local Terrain = if script ~= nil then require(script.Parent.Terrain) else require("./Terrain")
 local Structures = if script ~= nil
 	then require(script.Parent.Structures)
 	else require("./Structures")
+local Template = if script ~= nil then require(script.Parent.Template) else require("./Template")
 
 local Features = {}
 
@@ -24,6 +26,11 @@ end
 function Features.applyGated(make: any, layout: any): ()
 	if Structures.enabled(make) then
 		Structures.apply(make, layout)
+	end
+	-- Templates reserve ground last, so a set piece is never placed on a pillar
+	-- or under a hanging wall.
+	if Template.enabled(make) then
+		Template.apply(make, layout)
 	end
 end
 
@@ -79,7 +86,7 @@ function Features.validate(config: any): { string }
 end
 
 function Features.names(): { string }
-	return { "terrain", "structures" }
+	return { "terrain", "structures", "template" }
 end
 
 return Features

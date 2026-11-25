@@ -304,5 +304,16 @@
       },
       "prefab": "wall_stain"
     }
+  ],
+  "templates": [
+    {
+      "ref": "manila",
+      "footprint": {
+        "w": 3,
+        "d": 3
+      },
+      "count": 1,
+      "spacing": 6
+    }
   ]
 }

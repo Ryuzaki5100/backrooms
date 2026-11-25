@@ -732,6 +732,32 @@ local function details(
 	end
 end
 
+-- Debug only (task 0036): a flat pad over a reserved template footprint, so
+-- placement is visible before any set-piece model exists. Production emits
+-- nothing, which is why the pinned geometry fingerprint does not move.
+local function templates(
+	parts: { Part },
+	layout: any,
+	originX: number,
+	originZ: number,
+	style: any
+): ()
+	local cell = layout.cell
+	for _, template in ipairs(layout.templates) do
+		local index = idx(layout, template.cellX, template.cellZ)
+		local level = layout.floorY[index] or 0
+		add(
+			parts,
+			"template",
+			"template:" .. template.ref,
+			{ template.w * cell, 0.2, template.d * cell },
+			{ originX + template.x, level + 0.1, originZ + template.z },
+			style.materials.ceiling,
+			{ canCollide = false, tag = "qa" }
+		)
+	end
+end
+
 function ChunkRenderer.describe(layout: any, options: any?): { Part }
 	local style = styleOf(options and options.style)
 	local parts: { Part } = {}
@@ -752,6 +778,7 @@ function ChunkRenderer.describe(layout: any, options: any?): { Part }
 	end
 	if debug then
 		details(parts, layout, originX, originZ, style)
+		templates(parts, layout, originX, originZ, style)
 	end
 
 	if #parts > style.budget then

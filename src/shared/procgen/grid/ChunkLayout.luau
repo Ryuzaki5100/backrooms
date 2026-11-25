@@ -23,6 +23,18 @@ export type Detail = {
 	z: number,
 }
 
+-- An authored set piece reserved on the grid. `cellX`/`cellZ` is the
+-- north-west cell of the footprint; `x`/`z` is its centre in chunk-local studs.
+export type Template = {
+	ref: string,
+	cellX: number,
+	cellZ: number,
+	w: number,
+	d: number,
+	x: number,
+	z: number,
+}
+
 export type Layout = {
 	cx: number,
 	cz: number,
@@ -53,6 +65,10 @@ export type Layout = {
 	outFloorE: { number },
 	outFloorS: { number },
 	details: { Detail },
+	-- Cells reserved by a template footprint (task 0036). Nothing is built from
+	-- them yet: the descriptor only reserves ground for a future model.
+	templateCell: { boolean },
+	templates: { Template },
 }
 
 function Layout.index(n: number, i: number, j: number): number
@@ -79,6 +95,8 @@ function Layout.new(cx: number, cz: number, n: number, cell: number): Layout
 		outFloorE = {},
 		outFloorS = {},
 		details = {},
+		templateCell = {},
+		templates = {},
 	}
 	for index = 1, n * n do
 		layout.solid[index] = false
@@ -89,6 +107,7 @@ function Layout.new(cx: number, cz: number, n: number, cell: number): Layout
 		layout.hangS[index] = false
 		layout.sealedE[index] = false
 		layout.sealedS[index] = false
+		layout.templateCell[index] = false
 	end
 	for j = 1, n do
 		layout.outHeightE[j] = 0
