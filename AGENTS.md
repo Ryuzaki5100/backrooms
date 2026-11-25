@@ -38,7 +38,7 @@ devenv test             # lint + format check + build
 |---|---|
 | Open Studio on the tracked place | `studio-open` (add `--cloud` for the published place) |
 | Start live sync | `devenv up` (or `rojo serve --port 34872`) |
-| Build the place | `build` → `rojo build default.project.json -o place/noclip-protocol.rbxlx` |
+| Build the project | `build` → `rojo build default.project.json -o build/noclip-protocol.rbxlx` |
 | Generate LSP sourcemap | `sourcemap` |
 | Lint | `lint` (`selene src`) |
 | Format | `fmt` (`stylua src`) |
@@ -49,6 +49,11 @@ devenv test             # lint + format check + build
 
 `sourcemap.json`, `globalTypes.d.luau`, `build/` and `.devenv/` are generated and
 gitignored. `devenv.lock` IS committed: it pins the toolchain.
+
+A build never writes to `place/`. The tracked place carries Studio-authored
+geometry (set-piece templates) that the Rojo project does not describe, so a
+project build over it would silently delete that work. Regenerating the place is
+a deliberate Studio action (`studio-open`, sync, save), not a build step.
 
 ## Conventions
 

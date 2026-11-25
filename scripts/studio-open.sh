@@ -53,7 +53,7 @@ if [ "$mode" = cloud ]; then
 fi
 
 [ -f "$place_file" ] || {
-	echo "studio-open: $place_file is missing; run 'rojo build default.project.json -o $place_file'" >&2
+	echo "studio-open: $place_file is missing; restore it with 'git restore $place_file' (a project build cannot recreate the place)" >&2
 	exit 1
 }
 nohup "$studio" --task EditFile --localPlaceFile "$ROOT/$place_file" >/dev/null 2>&1 &

@@ -4,6 +4,9 @@ let
   game = identity.game;
   placeId = if game.placeId == null then "" else toString game.placeId;
   universeId = if game.universeId == null then "" else toString game.universeId;
+  # Builds are emitted under build/, never over the tracked place: the place
+  # carries Studio-authored geometry that the Rojo project cannot reproduce.
+  placeName = builtins.baseNameOf identity.placeFile;
 in {
   # Pinned Luau toolchain. Roblox Studio itself is not packaged: it installs and
   # updates from Roblox's own installer, and its MCP server ships inside the
@@ -43,7 +46,11 @@ in {
     publish.exec = ''exec "$DEVENV_ROOT/scripts/publish.sh" "$@"'';
     lint.exec = "selene src";
     fmt.exec = "stylua src";
-    build.exec = "rojo build default.project.json -o ${identity.placeFile}";
+    # A project build cannot recreate Studio-authored geometry (the set-piece
+    # templates live only in the place), so writing a build over the tracked
+    # place would delete work. Regenerating the place is a deliberate Studio
+    # action; `build` stays a scratch build, as in CI.
+    build.exec = "mkdir -p build && rojo build default.project.json -o build/${placeName}";
     sourcemap.exec = "rojo sourcemap default.project.json --output sourcemap.json";
     progentest.exec = "lune run tests/run.luau";
     configcheck.exec = "lune run scripts/gen-config.luau --check";

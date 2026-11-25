@@ -18,13 +18,14 @@ place/                   tracked XML place file
 
 ```sh
 rojo serve                       # sync src/ into an open Studio session
-rojo build default.project.json -o place/noclip-protocol.rbxlx
+devenv build                     # scratch build into build/; never the tracked place
 selene src                       # lint
 stylua src                       # format
 ```
 
 Luau edits go in `src/`; geometry goes in the tracked place file. Both are
-committed. See `docs/RUNBOOK.md` for the step-by-step procedure (cold start,
+committed. `build` writes under `build/` only: the place carries Studio-authored
+geometry that a project build cannot reproduce. See `docs/RUNBOOK.md` for the step-by-step procedure (cold start,
 daily loop, git, publishing, troubleshooting) and `AGENTS.md` for the agent
 contract.
 
