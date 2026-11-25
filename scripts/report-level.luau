@@ -161,17 +161,31 @@ local n = layout.n
 local function idx(i: number, j: number): number
 	return i + (j - 1) * n
 end
+-- Faces are stored once (E/S); W/N are the neighbour's E/S, or the pure line
+-- function at the chunk border.
+local function west(i: number, j: number): boolean
+	if i > 1 then
+		return layout.sealedE[idx(i - 1, j)] == true
+	end
+	return OpenAdditive.faceV(make, layout.cx * n, layout.cz * n + j - 1)
+end
+local function north(i: number, j: number): boolean
+	if j > 1 then
+		return layout.sealedS[idx(i, j - 1)] == true
+	end
+	return OpenAdditive.faceH(make, layout.cx * n + i - 1, layout.cz * n)
+end
 print(string.format("\ncentre chunk %d,%d", centre, centre))
 for j = 1, n do
 	local top = {}
 	for i = 1, n do
-		top[#top + 1] = if layout.sealedN[idx(i, j)] then "+--" else "+  "
+		top[#top + 1] = if north(i, j) then "+--" else "+  "
 	end
 	top[#top + 1] = "+"
 	print(table.concat(top))
 	local row = {}
 	for i = 1, n do
-		row[#row + 1] = if layout.sealedW[idx(i, j)] then "|" else " "
+		row[#row + 1] = if west(i, j) then "|" else " "
 		row[#row + 1] = if layout.solid[idx(i, j)] then "##" else "  "
 	end
 	row[#row + 1] = if layout.sealedE[idx(n, j)] then "|" else " "
