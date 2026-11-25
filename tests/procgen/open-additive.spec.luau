@@ -4,6 +4,7 @@ local H = require("../harness")
 local OpenAdditive = require("../../src/shared/procgen/strategies/OpenAdditive")
 local ChunkRenderer = require("../../src/shared/procgen/grid/ChunkRenderer")
 local Metrics = require("../../src/shared/procgen/Metrics")
+local Hash = require("../../src/shared/procgen/Hash")
 local Level0 = require("../../src/config/levels/Level_0")
 
 local function clone(value: any): any
@@ -193,4 +194,46 @@ H.test("terrain generates plateaus and sound ramps when enabled", function()
 		end
 	end
 	H.ok(ramps > 0, "has ramps")
+end)
+
+local function partFingerprint(config: any, seed: number): (string, number)
+	local make = OpenAdditive.world(config, seed)
+	local lines = {}
+	for cz = 0, 2 do
+		for cx = 0, 2 do
+			local layout = OpenAdditive.layout(make, cx, cz)
+			for _, part in ipairs(ChunkRenderer.describe(layout, { style = { budget = 9000 } })) do
+				lines[#lines + 1] = table.concat({
+					part.kind,
+					part.owner,
+					tostring(part.size[1]),
+					tostring(part.size[2]),
+					tostring(part.size[3]),
+					tostring(part.position[1]),
+					tostring(part.position[2]),
+					tostring(part.position[3]),
+					tostring(part.yaw),
+					tostring(part.wedge or false),
+				}, "|")
+			end
+		end
+	end
+	table.sort(lines)
+	return Hash.of(table.concat(lines, "\n")), #lines
+end
+
+H.test("extracting features changed no geometry", function()
+	-- A refactor is proven a no-op when the shipped config still fingerprints to
+	-- the same value. Re-baseline deliberately if a feature actually changes.
+	local config = clone(Level0)
+	config.world = clone(Level0.world)
+	config.world.worldSizeChunks = 3
+
+	local fp42, count42 = partFingerprint(config, 42)
+	H.eq(fp42, "fa35cabe3ba80270", "seed 42 fingerprint")
+	H.eq(count42, 431, "seed 42 part count")
+
+	local fp1337, count1337 = partFingerprint(config, 1337)
+	H.eq(fp1337, "a0ed9c5957edef03", "seed 1337 fingerprint")
+	H.eq(count1337, 398, "seed 1337 part count")
 end)

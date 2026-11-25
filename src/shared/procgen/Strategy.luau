@@ -22,6 +22,10 @@ local REGISTRY: { [string]: any } = {
 
 local DEFAULT = "rooms_and_corridors"
 
+local Features = if script ~= nil
+	then require(script.Parent.features.Features)
+	else require("./features/Features")
+
 function Strategy.names(): { string }
 	local names = {}
 	for name in pairs(REGISTRY) do
@@ -124,6 +128,10 @@ function Strategy.validate(config: any): { string }
 				end
 			end
 		end
+	end
+
+	for _, problem in ipairs(Features.validate(config)) do
+		table.insert(problems, problem)
 	end
 
 	local details = config.details or {}

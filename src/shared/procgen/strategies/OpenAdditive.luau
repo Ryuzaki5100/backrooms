@@ -9,12 +9,20 @@
 -- reading each other's content. That is what makes generation chunk-order
 -- independent and the border invisible.
 
-local Hash = if script ~= nil then require(script.Parent.Parent.Hash) else require("../Hash")
 local Rng = if script ~= nil then require(script.Parent.Parent.Rng) else require("../Rng")
 local Layout = if script ~= nil
 	then require(script.Parent.Parent.grid.ChunkLayout)
 	else require("../grid/ChunkLayout")
 local World = if script ~= nil then require(script.Parent.Parent.World) else require("../World")
+local Common = if script ~= nil
+	then require(script.Parent.Parent.features.Common)
+	else require("../features/Common")
+local Terrain = if script ~= nil
+	then require(script.Parent.Parent.features.Terrain)
+	else require("../features/Terrain")
+local Features = if script ~= nil
+	then require(script.Parent.Parent.features.Features)
+	else require("../features/Features")
 
 local OpenAdditive = {}
 
@@ -31,40 +39,6 @@ local DEFAULTS = {
 	heights = { 10, 12, 14 },
 	detailChance = 0.4,
 }
-
--- FNV over a coordinate string has poor avalanche: neighbouring coordinates
--- differ in one byte and land within 0.004 of each other, so zone fields came
--- out banded and some seeds had no terrain at all. A murmur-style finalizer
--- fixes the low-entropy input without a new hash.
-local function hash01(seed: number, salt: string, a: number, b: number): number
-	local h = Hash.u32(seed .. ":" .. salt .. ":" .. a .. ":" .. b)
-	h = Hash.mul32(bit32.bxor(h, bit32.rshift(h, 16)), 2246822507)
-	h = Hash.mul32(bit32.bxor(h, bit32.rshift(h, 13)), 3266489909)
-	h = bit32.bxor(h, bit32.rshift(h, 16))
-	return h / 4294967296
-end
-
--- A config value is either a number or a {min,max} band. Bands are drawn once
--- per seed, so a level varies within its range but is never fixed nor out of it.
-local function bandValue(rng: any, value: any, fallback: number): number
-	if type(value) == "number" then
-		return value
-	end
-	if type(value) == "table" and value[1] ~= nil and value[2] ~= nil then
-		return value[1] + rng:nextFloat() * (value[2] - value[1])
-	end
-	return fallback
-end
-
-local function drawShares(seed: number, terrain: any): any
-	local rng = Rng.new(seed):fork("terrain")
-	local t = terrain or {}
-	return {
-		plateau = bandValue(rng, t.plateauShare, 0.10),
-		sunken = bandValue(rng, t.sunkenShare, 0.10),
-		rampChance = bandValue(rng, t.rampChance, 0.15),
-	}
-end
 
 local function param(params: any, key: string, fallback: any): any
 	local value = params[key]
@@ -97,15 +71,8 @@ function OpenAdditive.world(config: any, seed: number): any
 		period = size.chunks * n,
 		boundary = boundary,
 		blocks = {},
-		terrainShares = drawShares(seed, params.terrain),
+		terrainShares = Terrain.drawShares(seed, params.terrain),
 	}
-end
-
-local function canonical(make: any, value: number): number
-	if make.boundary == "wrap" then
-		return World.wrap(value, make.period)
-	end
-	return value
 end
 
 local function blockOf(make: any, gx: number, gz: number): any
@@ -128,7 +95,7 @@ local function blockOf(make: any, gx: number, gz: number): any
 	local hallBlocks = param(make.params, "hallBlocks", DEFAULTS.hallBlocks)
 	local zoneX = math.floor(bx / hallBlocks)
 	local zoneZ = math.floor(bz / hallBlocks)
-	local isHall = hash01(make.seed, "zone", zoneX, zoneZ)
+	local isHall = Common.hash01(make.seed, "zone", zoneX, zoneZ)
 		< param(make.params, "hallShare", DEFAULTS.hallShare)
 
 	local rng = Rng.new(make.seed):fork("block:" .. bx .. ":" .. bz)
@@ -182,42 +149,22 @@ end
 
 -- Terrain: a coarse zone field, not per-cell noise, so plateaus and sunken
 -- areas are large enough to walk on.
-local function terrainAt(make: any, gx: number, gz: number): number
-	local terrain = make.params.terrain
-	if terrain == nil then
-		return 0
-	end
-	local blocks = terrain.blocksPerZone or 2
-	local span = make.block * blocks
-	local bx = math.floor(canonical(make, gx) / span)
-	local bz = math.floor(canonical(make, gz) / span)
-	local roll = hash01(make.seed, "terrain", bx, bz)
-	local shares = make.terrainShares or { plateau = 0, sunken = 0 }
-	local level = terrain.level or 4
-	if roll < shares.sunken then
-		return -level
-	elseif roll < shares.sunken + shares.plateau then
-		return level
-	end
-	return 0
-end
-
 function OpenAdditive.cell(make: any, gx: number, gz: number): (boolean, number, number)
-	local x = canonical(make, gx)
-	local z = canonical(make, gz)
+	local x = Common.canonical(make, gx)
+	local z = Common.canonical(make, gz)
 	local bx = math.floor(x / make.block)
 	local bz = math.floor(z / make.block)
 	local block = blockOf(make, x, z)
 	local li = x - bx * make.block
 	local lj = z - bz * make.block
-	return block.solid[li .. ":" .. lj] == true, block.height, terrainAt(make, x, z)
+	return block.solid[li .. ":" .. lj] == true, block.height, Terrain.terrainAt(make, x, z)
 end
 
 -- Vertical wall on the grid line `lineX`, at row `cellZ`.
 function OpenAdditive.faceV(make: any, lineX: number, cellZ: number): boolean
-	local line = canonical(make, lineX)
-	local z = canonical(make, cellZ)
-	local west = canonical(make, line - 1)
+	local line = Common.canonical(make, lineX)
+	local z = Common.canonical(make, cellZ)
+	local west = Common.canonical(make, line - 1)
 	local westSolid = OpenAdditive.cell(make, west, z)
 	local eastSolid = OpenAdditive.cell(make, line, z)
 	if westSolid or eastSolid then
@@ -233,9 +180,9 @@ end
 
 -- Horizontal wall on the grid line `lineZ`, at column `cellX`.
 function OpenAdditive.faceH(make: any, cellX: number, lineZ: number): boolean
-	local x = canonical(make, cellX)
-	local line = canonical(make, lineZ)
-	local north = canonical(make, line - 1)
+	local x = Common.canonical(make, cellX)
+	local line = Common.canonical(make, lineZ)
+	local north = Common.canonical(make, line - 1)
 	local northSolid = OpenAdditive.cell(make, x, north)
 	local southSolid = OpenAdditive.cell(make, x, line)
 	if northSolid or southSolid then
@@ -629,182 +576,7 @@ function OpenAdditive.layout(make: any, cx: number, cz: number, options: any?): 
 		layout.outFloorS[j] = outS[3]
 	end
 
-	-- Terrain pass (ADR 0029): a rise above one stud is a retaining edge unless
-	-- a ramp can stand on the higher side and continue into the plateau. A ramp
-	-- replaces that cell's floor; the boundary stays open.
-	local terrain = make.params.terrain or {}
-	local stepMax = terrain.stepMax or 1
-	local minHeadroom = terrain.minHeadroom or 9
-
-	local function floorOf(i: number, j: number): number
-		if i < 1 or j < 1 or i > n or j > n then
-			local gx = originX + i - 1
-			local gz = originZ + j - 1
-			return select(3, OpenAdditive.cell(make, gx, gz))
-		end
-		return layout.floorY[Layout.index(n, i, j)]
-	end
-
-	local function placeRamp(
-		i: number,
-		j: number,
-		axis: string,
-		dir: number,
-		lowY: number,
-		highY: number
-	)
-		if i < 1 or j < 1 or i > n or j > n then
-			return false
-		end
-		local index = Layout.index(n, i, j)
-		if layout.ramp[index] ~= nil then
-			return false
-		end
-		layout.ramp[index] = { axis = axis, dir = dir, lowY = lowY, highY = highY }
-		return true
-	end
-
-	for j = 1, n do
-		for i = 1, n do
-			local index = Layout.index(n, i, j)
-			local here = layout.floorY[index]
-
-			-- east boundary
-			local east = floorOf(i + 1, j)
-			local diff = east - here
-			if diff ~= 0 then
-				if math.abs(diff) <= stepMax then
-					layout.sealedE[index] = false
-				else
-					local highIsHere = diff < 0
-					local rampI = if highIsHere then i else i + 1
-					local inward = if highIsHere then i - 1 else i + 2
-					local chosen = hash01(
-						make.seed,
-						"ramp:x",
-						canonical(make, originX + i - 1),
-						canonical(make, originZ + j - 1)
-					) < ((make.terrainShares and make.terrainShares.rampChance) or 0.15)
-					local placed = chosen
-						and placeRamp(
-							rampI,
-							j,
-							"x",
-							if highIsHere then -1 else 1,
-							math.min(here, east),
-							math.max(here, east)
-						)
-					if placed then
-						local inwardFloor = floorOf(inward, j)
-						if inwardFloor ~= layout.floorY[Layout.index(n, rampI, j)] then
-							-- The plateau does not continue: a ramp would end in mid-air.
-							layout.ramp[Layout.index(n, rampI, j)] = nil
-							placed = false
-						end
-					end
-					layout.sealedE[index] = not placed
-				end
-			end
-
-			-- south boundary
-			local south = floorOf(i, j + 1)
-			local diffS = south - here
-			if diffS ~= 0 then
-				if math.abs(diffS) <= stepMax then
-					layout.sealedS[index] = false
-				else
-					local highIsHere = diffS < 0
-					local rampJ = if highIsHere then j else j + 1
-					local inward = if highIsHere then j - 1 else j + 2
-					local chosen = hash01(
-						make.seed,
-						"ramp:z",
-						canonical(make, originX + i - 1),
-						canonical(make, originZ + j - 1)
-					) < ((make.terrainShares and make.terrainShares.rampChance) or 0.15)
-					local placed = chosen
-						and placeRamp(
-							i,
-							rampJ,
-							"z",
-							if highIsHere then -1 else 1,
-							math.min(here, south),
-							math.max(here, south)
-						)
-					if placed then
-						local inwardFloor = floorOf(i, inward)
-						if inwardFloor ~= layout.floorY[Layout.index(n, i, rampJ)] then
-							layout.ramp[Layout.index(n, i, rampJ)] = nil
-							placed = false
-						end
-					end
-					layout.sealedS[index] = not placed
-				end
-			end
-		end
-	end
-
-	for index = 1, n * n do
-		layout.height[index] = math.max(layout.height[index], minHeadroom)
-	end
-
-	-- Feature zones (pillar grids and hanging walls): a flat zone with a
-	-- structure standing on it, not another height.
-	local features = make.params.features or {}
-	if features.pillarGrid ~= nil or features.hangingWall ~= nil then
-		local pillar = features.pillarGrid or {}
-		local hang = features.hangingWall or {}
-		local pillarShare = pillar.share or 0
-		local hangShare = hang.share or 0
-		for j = 1, n do
-			for i = 1, n do
-				local index = Layout.index(n, i, j)
-				local gx = originX + i - 1
-				local gz = originZ + j - 1
-				local bx = math.floor(canonical(make, gx) / make.block)
-				local bz = math.floor(canonical(make, gz) / make.block)
-				local roll = hash01(make.seed, "feature", bx, bz)
-				if roll < pillarShare and not layout.solid[index] then
-					local spacing = pillar.spacing or 2
-					if (i - 1) % spacing == 0 and (j - 1) % spacing == 0 then
-						layout.column[index] = true
-					end
-					if layout.columnStuds == nil then
-						layout.columnStuds = pillar.columnStuds or 2
-					end
-				elseif roll < pillarShare + hangShare and not layout.solid[index] then
-					if layout.hangDepth == nil then
-						layout.hangDepth = hang.depth or 4
-					end
-					local density = hang.density or 0.5
-					if
-						not layout.sealedE[index]
-						and hash01(
-								make.seed,
-								"hang:x",
-								canonical(make, gx),
-								canonical(make, gz)
-							)
-							< density
-					then
-						layout.hangE[index] = true
-					end
-					if
-						not layout.sealedS[index]
-						and hash01(
-								make.seed,
-								"hang:z",
-								canonical(make, gx),
-								canonical(make, gz)
-							)
-							< density
-					then
-						layout.hangS[index] = true
-					end
-				end
-			end
-		end
-	end
+	Features.apply(make, layout)
 
 	connect(layout)
 	local policy = opts.enclosedPolicy or DEFAULTS.enclosedPolicy or "solidify"
