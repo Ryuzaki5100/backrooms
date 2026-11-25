@@ -65,6 +65,15 @@ function Config.fingerprint(config: any): string
 	parts[#parts + 1] = "d:" .. tostring(generate.deadEnds or 0)
 	parts[#parts + 1] = "m:" .. tostring(generate.maxLevels or 1)
 
+	local connectivity = generate.connectivity or {}
+	parts[#parts + 1] = table.concat({
+		"c",
+		tostring(connectivity.corridorBias or 0.85),
+		tostring(connectivity.roomToRoom or 0.15),
+		tostring(connectivity.extraChance or 0),
+		tostring(connectivity.sealedShare or 0),
+	}, ":")
+
 	for _, form in ipairs(generate.connectorForms or {}) do
 		parts[#parts + 1] = "cf:" .. tostring(form.kind) .. ":" .. tostring(form.weight)
 	end

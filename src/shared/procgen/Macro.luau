@@ -83,8 +83,15 @@ local function isRoomish(node: any): boolean
 end
 
 local function ensureCorridorShare(rng: any, nodes: { any }, generate: any): ()
-	local minShare = (generate.corridors and generate.corridors.minShare) or 0.2
-	local maxShare = (generate.corridors and generate.corridors.maxShare) or 0.3
+	local share = generate.corridors
+	local minShare, maxShare
+	if type(share) == "number" then
+		minShare = math.max(0, share - 0.05)
+		maxShare = math.min(0.6, share + 0.05)
+	else
+		minShare = (share and share.minShare) or 0.2
+		maxShare = (share and share.maxShare) or 0.3
+	end
 	local count = #nodes
 
 	local function corridors(): number

@@ -1,5 +1,5 @@
 {
-  "schema": 3,
+  "schema": 4,
   "id": "level-0",
   "title": "Level 0: The Lobby",
   "dead_end": false,
@@ -36,6 +36,12 @@
       "corridor_hall": 2,
       "vertical": 2,
       "room_room": 1
+    },
+    "connectivity": {
+      "corridorBias": 0.85,
+      "roomToRoom": 0.15,
+      "extraChance": 0.0,
+      "sealedShare": 0.0
     }
   },
   "tileset": "lobby",

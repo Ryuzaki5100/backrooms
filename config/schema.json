@@ -19,7 +19,7 @@
     "schema": {
       "type": "integer",
       "enum": [
-        3
+        4
       ]
     },
     "id": {
@@ -124,24 +124,33 @@
           }
         },
         "corridors": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "minShare",
-            "maxShare"
-          ],
-          "properties": {
-            "minShare": {
+          "anyOf": [
+            {
               "type": "number",
               "minimum": 0,
-              "maximum": 1
+              "maximum": 0.6
             },
-            "maxShare": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "minShare",
+                "maxShare"
+              ],
+              "properties": {
+                "minShare": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 0.6
+                },
+                "maxShare": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 0.6
+                }
+              }
             }
-          }
+          ]
         },
         "loopPreference": {
           "type": "object",
@@ -169,6 +178,35 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 100
+            }
+          }
+        },
+        "connectivity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "corridorBias"
+          ],
+          "properties": {
+            "corridorBias": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "roomToRoom": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "extraChance": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "sealedShare": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 0.5
             }
           }
         }

@@ -9,6 +9,7 @@ local Level0 = require("../../src/config/levels/Level_0")
 local OPTIONS = {
 	loops = Level0.generate.loops,
 	loopPreference = Level0.generate.loopPreference,
+	connectivity = Level0.generate.connectivity,
 }
 
 local function build(seed: number, styleOptions: any?): ({ any }, any)

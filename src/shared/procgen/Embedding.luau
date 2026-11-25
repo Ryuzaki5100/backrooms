@@ -295,7 +295,24 @@ local function buildDoors(plan: any, nodes: { any }, adjacency: { any }, options
 		byId[node.id] = node
 	end
 
-	-- BFS over the adjacency graph from the spawn.
+	local connectivity = options.connectivity or {}
+	local bias = connectivity.corridorBias or 0.85
+	local roomToRoom = connectivity.roomToRoom or 0.15
+	local extraChance = connectivity.extraChance or 0
+
+	local doorRng = Rng.new(plan.seed):fork("doors")
+
+	-- How much the tree prefers a door onto this kind of space. A bias of 1
+	-- means "corridor whenever possible"; 0 means "plain BFS".
+	local function kindScore(kind: string): number
+		if kind == "corridor" then
+			return 1
+		elseif kind == "hall" then
+			return 0.7
+		end
+		return 1 - bias
+	end
+
 	local linked: { [number]: { any } } = {}
 	for _, node in ipairs(nodes) do
 		linked[node.id] = {}
@@ -307,40 +324,126 @@ local function buildDoors(plan: any, nodes: { any }, adjacency: { any }, options
 
 	local visited: { [number]: boolean } = { [plan.spawn.nodeId] = true }
 	local queue = { plan.spawn.nodeId }
-	local head = 1
+	local expanded: { [number]: boolean } = {}
 	local used: { [string]: boolean } = {}
 	local edgeId = 0
 
-	while head <= #queue do
-		local current = queue[head]
-		head += 1
+	local function addDoor(edge: any, kind: string): boolean
+		if used[edge.key] then
+			return false
+		end
+		local aPort, bPort = makeDoorPorts(plan, edge.a, edge.sideA, edge.b, edge.sideB)
+		if aPort == nil then
+			return false
+		end
+		used[edge.key] = true
+		edgeId += 1
+		table.insert(plan.edges, {
+			id = edgeId,
+			a = edge.a.id,
+			b = edge.b.id,
+			aPort = aPort,
+			bPort = bPort,
+			kind = kind,
+		})
+		return true
+	end
+
+	-- Best-first expansion: corridors and halls claim their neighbours before
+	-- rooms get a chance to open into each other. A plain FIFO BFS makes the
+	-- tree shape depend on the pack order, which is why most doors were
+	-- room-to-room a moment ago.
+	while true do
+		local pickIndex, pickScore = nil, -1
+		for index = 1, #queue do
+			local id = queue[index]
+			if not expanded[id] then
+				local score = kindScore(byId[id].kind)
+				if score > pickScore then
+					pickScore = score
+					pickIndex = index
+				end
+			end
+		end
+		if pickIndex == nil then
+			break
+		end
+		local current = queue[pickIndex]
+		expanded[current] = true
+		local currentKind = byId[current].kind
+
+		local candidates = {}
 		for _, edge in ipairs(linked[current]) do
 			if not used[edge.key] then
 				local other = if edge.a.id == current then edge.b else edge.a
 				if not visited[other.id] then
-					visited[other.id] = true
-					table.insert(queue, other.id)
-					used[edge.key] = true
-					edgeId += 1
-					local aPort, bPort = makeDoorPorts(plan, edge.a, edge.sideA, edge.b, edge.sideB)
-					if aPort == nil then
-						edgeId -= 1
-					else
-						table.insert(plan.edges, {
-							id = edgeId,
-							a = edge.a.id,
-							b = edge.b.id,
-							aPort = aPort,
-							bPort = bPort,
-							kind = "passage",
-						})
-					end
+					table.insert(candidates, {
+						edge = edge,
+						other = other,
+						score = kindScore(other.kind),
+						roomRoom = currentKind == "room" and other.kind == "room",
+					})
 				end
+			end
+		end
+		table.sort(candidates, function(x: any, y: any)
+			if x.score ~= y.score then
+				return x.score > y.score
+			end
+			return x.edge.key < y.edge.key
+		end)
+
+		local function connectCandidate(candidate: any): boolean
+			if addDoor(candidate.edge, "passage") then
+				visited[candidate.other.id] = true
+				table.insert(queue, candidate.other.id)
+				return true
+			end
+			return false
+		end
+
+		-- Every unvisited neighbour gets a door when the policy allows it; a
+		-- spanning tree needs all of them, not just the best one.
+		for _, candidate in ipairs(candidates) do
+			if not candidate.roomRoom or doorRng:nextFloat() <= roomToRoom then
+				connectCandidate(candidate)
 			end
 		end
 	end
 
-	-- Loops: adjacent pairs that are not already doorways.
+	-- Forced sweep: anything the policy skipped (a room whose only neighbours
+	-- are rooms, a cluster of them) still needs a door, or it is sealed by
+	-- accident rather than by design.
+	local guard = #nodes * 4
+	while guard > 0 do
+		guard -= 1
+		local progressed = false
+		for _, edge in ipairs(adjacency) do
+			local aVisited = visited[edge.a.id] == true
+			local bVisited = visited[edge.b.id] == true
+			if aVisited ~= bVisited and not used[edge.key] then
+				if addDoor(edge, "passage") then
+					visited[edge.a.id] = true
+					visited[edge.b.id] = true
+					progressed = true
+				end
+			end
+		end
+		if not progressed then
+			break
+		end
+	end
+
+	-- Incidental doors, off by default.
+	if extraChance > 0 then
+		for _, edge in ipairs(adjacency) do
+			if not used[edge.key] and doorRng:nextFloat() <= extraChance then
+				addDoor(edge, "passage")
+			end
+		end
+	end
+
+	-- Loops: the deliberate extras, biased by the level's preference table.
 	local candidates = table.clone(adjacency)
 	table.sort(candidates, function(x: any, y: any)
 		local wx = loopWeight(x.a, x.b, options.loopPreference or {})
@@ -356,27 +459,12 @@ local function buildDoors(plan: any, nodes: { any }, adjacency: { any }, options
 			break
 		end
 		if not used[edge.key] then
-			used[edge.key] = true
-			loops -= 1
-			edgeId += 1
-			local aPort, bPort = makeDoorPorts(plan, edge.a, edge.sideA, edge.b, edge.sideB)
-			if aPort == nil then
-				edgeId -= 1
-			else
-				table.insert(plan.edges, {
-					id = edgeId,
-					a = edge.a.id,
-					b = edge.b.id,
-					aPort = aPort,
-					bPort = bPort,
-					kind = "loop",
-				})
+			if addDoor(edge, "loop") then
+				loops -= 1
 			end
 		end
 	end
 end
-
--- -------------------------------------------------------------------- entry
 
 function Embedding.embed(plan: any, options: any?): any
 	local opts = options or {}

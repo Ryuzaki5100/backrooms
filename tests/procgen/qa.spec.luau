@@ -10,6 +10,7 @@ local Level0 = require("../../src/config/levels/Level_0")
 local OPTIONS = {
 	loops = Level0.generate.loops,
 	loopPreference = Level0.generate.loopPreference,
+	connectivity = Level0.generate.connectivity,
 }
 
 local function build(seed: number): (any, { any })
@@ -135,4 +136,25 @@ H.test("doors are not all centred on their walls", function()
 		end
 	end
 	H.ok(offCentre > 0, "at least some doors are off-centre")
+end)
+
+H.test("the strictest door policy still yields a connected level", function()
+	-- corridorBias 1 forbids room-to-room doors unless forced; roomToRoom 0
+	-- removes even the probabilistic escape. Connectivity must still hold.
+	local config = table.clone(Level0)
+	config.generate = table.clone(Level0.generate)
+	config.generate.connectivity = {
+		corridorBias = 1,
+		roomToRoom = 0,
+		extraChance = 0,
+		sealedShare = 0,
+	}
+	local plan = Embedding.embed(Macro.build(config, 42), {
+		loops = config.generate.loops,
+		loopPreference = config.generate.loopPreference,
+		connectivity = config.generate.connectivity,
+	})
+	H.eq(#Embedding.validate(plan), 0, "still connected")
+	local parts = Geometry.describe(plan, { style = config.style })
+	H.eq(#Qa.check(plan, parts, { style = config.style }), 0, "still walkable")
 end)

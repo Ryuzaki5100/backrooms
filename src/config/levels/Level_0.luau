@@ -6,6 +6,12 @@ return {
 	["dead_end"] = false,
 	["entities"] = {},
 	["generate"] = {
+		["connectivity"] = {
+			["corridorBias"] = 0.85,
+			["extraChance"] = 0,
+			["roomToRoom"] = 0.15,
+			["sealedShare"] = 0,
+		},
 		["connectorForms"] = {
 			{
 				["kind"] = "hole",
@@ -70,7 +76,7 @@ return {
 			["weight"] = 1,
 		},
 	},
-	["schema"] = 3,
+	["schema"] = 4,
 	["source"] = {
 		["note"] = "60-lore/levels/level-0.md",
 		["revid"] = 1397338,
