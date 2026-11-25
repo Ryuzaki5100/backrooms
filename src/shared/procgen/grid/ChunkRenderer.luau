@@ -290,7 +290,13 @@ function ChunkRenderer.describe(layout: any, options: any?): { Part }
 	slabs(parts, layout, originX, originZ, style)
 	solids(parts, layout, originX, originZ, style)
 	walls(parts, layout, originX, originZ, style)
-	details(parts, layout, originX, originZ, style)
+	-- Details are layout data first: they are counted and reported whether or
+	-- not they have a prefab yet. Rendering them as bare plates in production
+	-- would put floating squares in the level, so they are debug-only until a
+	-- prefab exists (M21).
+	if options ~= nil and options.debug == true then
+		details(parts, layout, originX, originZ, style)
+	end
 
 	if #parts > style.budget then
 		error(

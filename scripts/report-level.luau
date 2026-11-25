@@ -45,7 +45,7 @@ local renderOptions = {
 }
 
 local layouts = {}
-local parts, totalMs = 0, 0
+local parts, totalMs, detailCount = 0, 0, 0
 for cz = 0, size.chunks - 1 do
 	for cx = 0, size.chunks - 1 do
 		local started = os.clock()
@@ -55,12 +55,16 @@ for cz = 0, size.chunks - 1 do
 		totalMs += (os.clock() - started) * 1000
 		layouts[cx .. ":" .. cz] = layout
 		parts += #ChunkRenderer.describe(layout, renderOptions)
+		detailCount += #layout.details
 	end
 end
 
 local metrics = Metrics.compute(make, layouts, {
 	largeRegionStuds = (config.verify and config.verify.largeRegionStuds) or 4000,
-	maxSightlineStuds = math.min((config.verify and config.verify.maxSightlineStuds) or 2000, size.studs),
+	maxSightlineStuds = math.min(
+		(config.verify and config.verify.maxSightlineStuds) or 2000,
+		size.studs
+	),
 	wallThickness = style.wallThickness or 1,
 })
 
@@ -100,11 +104,12 @@ print(
 )
 print(
 	string.format(
-		"wall faces %d (%.2f/cell)  parts %d (%.1f/chunk)  gen+render %.0f ms",
+		"wall faces %d (%.2f/cell)  parts %d (%.1f/chunk)  details %d  gen+render %.0f ms",
 		metrics.wallFaces,
 		metrics.wallFaces / metrics.cells,
 		parts,
 		perChunk,
+		detailCount,
 		totalMs
 	)
 )
