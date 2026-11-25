@@ -28,6 +28,8 @@ local KIND_MIX = {
 	{ kind = "hall", weight = 1 },
 }
 
+-- Default proportions. A level overrides these with `generate.sizes`; the
+-- values here are the "office with corridors" baseline, not Level 0's.
 local SIZE = {
 	room = { w = { 24, 40 }, h = 18, d = { 24, 40 } },
 	corridor = { w = { 10, 12 }, h = 14, d = { 24, 48 } },
@@ -49,6 +51,44 @@ local function randBetween(rng: any, low: number, high: number): number
 	return low + rng:nextInt(high - low + 1) - 1
 end
 
+-- A dimension is either a number or a {min,max} band. Footprints snap to a
+-- 4-stud structural grid: without it every face coordinate is a unique random
+-- sum, two spaces almost never share a wall line, and the adjacency graph is a
+-- tree with no loops. Backrooms are built on a grid; the variety is in how many
+-- cells a space takes, not in arbitrary decimals.
+local GRID = 4
+
+local function dimension(rng: any, band: any): number
+	local value = if type(band) == "number" then band else randBetween(rng, band[1], band[2])
+	return math.max(GRID, math.floor(value / GRID + 0.5) * GRID)
+end
+
+local function sizeOf(generate: any, kind: string): any
+	local sizes = generate.sizes or {}
+	return sizes[kind] or SIZE[kind] or SIZE.room
+end
+
+local function kindMixOf(generate: any): { any }
+	local mix = generate.kindMix
+	if mix == nil then
+		return KIND_MIX
+	end
+	local list = {}
+	for kind, weight in pairs(mix) do
+		if weight > 0 then
+			table.insert(list, { kind = kind, weight = weight })
+		end
+	end
+	-- pairs() order is not stable; sort so the weighted pick is deterministic.
+	table.sort(list, function(a: any, b: any)
+		return a.kind < b.kind
+	end)
+	if #list == 0 then
+		return KIND_MIX
+	end
+	return list
+end
+
 local function pickWeighted(rng: any, options: { any }, weightOf: (any) -> number): any
 	local total = 0
 	for _, option in ipairs(options) do
@@ -68,12 +108,12 @@ local function pickWeighted(rng: any, options: { any }, weightOf: (any) -> numbe
 	return options[#options]
 end
 
-local function conform(rng: any, node: any, kind: string): ()
-	local size = SIZE[kind] or SIZE.room
+local function conform(rng: any, node: any, kind: string, generate: any): ()
+	local size = sizeOf(generate or {}, kind)
 	node.kind = kind
-	node.w = randBetween(rng, size.w[1], size.w[2])
-	node.d = randBetween(rng, size.d[1], size.d[2])
-	node.h = size.h
+	node.w = dimension(rng, size.w)
+	node.d = dimension(rng, size.d)
+	node.h = dimension(rng, size.h)
 	node.filler = FILLER[kind] or "wfc"
 	node.params = node.params or {}
 end
@@ -111,7 +151,7 @@ local function ensureCorridorShare(rng: any, nodes: { any }, generate: any): ()
 		guard -= 1
 		local candidate = nodes[rng:nextInt(count)]
 		if candidate.kind == "room" then
-			conform(rng, candidate, "corridor")
+			conform(rng, candidate, "corridor", generate)
 		end
 	end
 	while corridors() > high and guard > 0 do
@@ -148,7 +188,7 @@ local function buildOnce(config: any, seed: number, attempt: number): (any?, str
 	local count = randBetween(rng, regions[1], regions[2])
 	local nodes: { any } = {}
 	for id = 1, count do
-		local mix = pickWeighted(rng, KIND_MIX, function(option)
+		local mix = pickWeighted(rng, kindMixOf(generate), function(option)
 			return option.weight
 		end)
 		-- Upper floors are sparse in v1: only some nodes are raised.
@@ -156,13 +196,13 @@ local function buildOnce(config: any, seed: number, attempt: number): (any?, str
 		if maxLevels >= 2 and id > 1 and rng:nextBool(0.25) then
 			level = 1
 		end
-		local size = SIZE[mix.kind] or SIZE.room
+		local size = sizeOf(generate, mix.kind)
 		table.insert(nodes, {
 			id = id,
 			kind = mix.kind,
-			w = randBetween(rng, size.w[1], size.w[2]),
-			h = size.h,
-			d = randBetween(rng, size.d[1], size.d[2]),
+			w = dimension(rng, size.w),
+			h = dimension(rng, size.h),
+			d = dimension(rng, size.d),
 			level = level,
 			x = 0,
 			y = 0,
@@ -283,7 +323,16 @@ local function buildOnce(config: any, seed: number, attempt: number): (any?, str
 	-- Decoys: exit-shaped features with no binding. They resolve to nothing or,
 	-- rarely, to a trap. They never grant mastery. They deliberately may share a
 	-- room with a real anchor: one of the two is a lie, and that is the point.
-	local decoyCount = math.floor(#nodes * (decoyPolicy.share or 0))
+	-- Decoys are a share of exit-like features, not of spaces: a 1,000-space
+	-- level should not have 200 fake exits.
+	local realAnchors = #exits
+	local share = decoyPolicy.share or 0
+	local decoyCount = 0
+	if share >= 1 then
+		decoyCount = realAnchors
+	elseif share > 0 then
+		decoyCount = math.floor(realAnchors * share / (1 - share) + 0.5)
+	end
 	local trapShare = decoyPolicy.trapShare or 0
 	local trapWeight = math.max(1, math.floor(100 * trapShare))
 	for index = 1, decoyCount do

@@ -6,15 +6,16 @@ local Geometry = require("../../src/shared/procgen/Geometry")
 local Macro = require("../../src/shared/procgen/Macro")
 local Level0 = require("../../src/config/levels/Level_0")
 
-local OPTIONS = {
-	loops = Level0.generate.loops,
-	loopPreference = Level0.generate.loopPreference,
-	connectivity = Level0.generate.connectivity,
-}
+local Level = require("../support/level")
+local OPTIONS = Level.embedOptions()
 
 local function build(seed: number, styleOptions: any?): ({ any }, any)
 	local plan = Embedding.embed(Macro.build(Level0, seed), OPTIONS)
-	return Geometry.describe(plan, styleOptions), plan
+	local options = { style = Level0.style }
+	for key, value in pairs(styleOptions or {}) do
+		options[key] = value
+	end
+	return Geometry.describe(plan, options), plan
 end
 
 local function count(parts: { any }, predicate: (any) -> boolean): number
@@ -48,13 +49,19 @@ local function onFace(part: any, node: any, side: string): boolean
 	return math.abs(part.position[1] - (node.x + node.w)) < 0.6
 end
 
-local function interval(part: any, node: any, side: string): (number, number)
+-- Projected onto the face, clamped to the face span. A party wall may run one
+-- wall thickness past a corner to close it; that is not coverage beyond the face.
+local function interval(part: any, node: any, side: string, width: number): (number, number)
 	local base = origin(node, side)
+	local start, finish
 	if side == "N" or side == "S" then
-		return part.position[1] - part.size[1] / 2 - base,
-			part.position[1] + part.size[1] / 2 - base
+		start = part.position[1] - part.size[1] / 2 - base
+		finish = part.position[1] + part.size[1] / 2 - base
+	else
+		start = part.position[3] - part.size[3] / 2 - base
+		finish = part.position[3] + part.size[3] / 2 - base
 	end
-	return part.position[3] - part.size[3] / 2 - base, part.position[3] + part.size[3] / 2 - base
+	return math.max(0, start), math.min(width, finish)
 end
 
 -- Union length of a set of intervals.
@@ -77,7 +84,7 @@ end
 H.test("describes a plan within budget and without ramps", function()
 	local parts = build(42)
 	H.ok(#parts > 0, "has parts")
-	H.ok(#parts <= 1200, "within budget")
+	H.ok(#parts <= Level0.style.budget.parts, "within budget")
 	H.eq(
 		count(parts, function(p)
 			return p.kind == "ramp"
@@ -89,7 +96,7 @@ end)
 
 H.test("description is deterministic", function()
 	local a, plan = build(42)
-	local b = Geometry.describe(plan, nil)
+	local b = Geometry.describe(plan, { style = Level0.style })
 	H.eq(Geometry.fingerprint(a), Geometry.fingerprint(b))
 	H.neq(Geometry.fingerprint(a), Geometry.fingerprint((build(43))), "different seed differs")
 end)
@@ -138,7 +145,7 @@ H.test("every face is covered by walls plus doorways", function()
 						end
 					end
 					if isNodeWall or belongsToEdge then
-						local start, finish = interval(part, node, side)
+						local start, finish = interval(part, node, side, width)
 						-- Door headers sit above the door; they still cover the face.
 						table.insert(intervals, { start, finish })
 					end

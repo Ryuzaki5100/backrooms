@@ -74,6 +74,39 @@ function Config.fingerprint(config: any): string
 		tostring(connectivity.sealedShare or 0),
 	}, ":")
 
+	local function band(value: any): string
+		if type(value) == "table" then
+			return tostring(value[1]) .. "-" .. tostring(value[2])
+		end
+		return tostring(value)
+	end
+
+	parts[#parts + 1] = "ls:" .. tostring(generate.loopShare or 0)
+	parts[#parts + 1] = "sep:" .. tostring(generate.exitSeparationShare or 0)
+	local openings = generate.openings or {}
+	parts[#parts + 1] = "op:"
+		.. tostring(openings.width or 4)
+		.. "x"
+		.. tostring(openings.height or 8)
+	for _, kind in ipairs({ "room", "corridor", "hall", "shaft" }) do
+		local size = (generate.sizes or {})[kind]
+		if size ~= nil then
+			parts[#parts + 1] = table.concat({
+				"sz",
+				kind,
+				band(size.w),
+				band(size.d),
+				band(size.h),
+			}, ":")
+		end
+	end
+	for _, kind in ipairs({ "room", "corridor", "hall" }) do
+		local weight = (generate.kindMix or {})[kind]
+		if weight ~= nil then
+			parts[#parts + 1] = "km:" .. kind .. ":" .. tostring(weight)
+		end
+	end
+
 	for _, form in ipairs(generate.connectorForms or {}) do
 		parts[#parts + 1] = "cf:" .. tostring(form.kind) .. ":" .. tostring(form.weight)
 	end

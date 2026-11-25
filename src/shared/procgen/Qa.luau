@@ -25,13 +25,19 @@ local CHARACTER_HEIGHT = 6
 local CLEARANCE = 0.5
 local CELL = 1
 
+-- Penetration on every axis must exceed the wall thickness to count as blocked.
+-- Two walls that meet at a corner share a sliver of volume the size of that
+-- thickness; that is a T-junction, not an obstruction, and growth packing
+-- produces many of them. A wall across the opening penetrates its full width.
+local CORNER_SLOP = 1.5
+
 local function boxesOverlap(a: any, b: any): boolean
-	return a.minX < b.maxX
-		and b.minX < a.maxX
-		and a.minY < b.maxY
-		and b.minY < a.maxY
-		and a.minZ < b.maxZ
-		and b.minZ < a.maxZ
+	return a.minX + CORNER_SLOP < b.maxX
+		and b.minX + CORNER_SLOP < a.maxX
+		and a.minY + CORNER_SLOP < b.maxY
+		and b.minY + CORNER_SLOP < a.maxY
+		and a.minZ + CORNER_SLOP < b.maxZ
+		and b.minZ + CORNER_SLOP < a.maxZ
 end
 
 local function partBox(part: any): any
@@ -275,7 +281,7 @@ function Qa.check(plan: any, parts: { any }, options: any?): { string }
 	end
 
 	if options and options.transitions then
-		for _, problem in ipairs(Qa.exits(plan, options.transitions)) do
+		for _, problem in ipairs(Qa.exits(plan, options.transitions, options)) do
 			table.insert(problems, problem)
 		end
 	end
@@ -375,7 +381,7 @@ end
 -- belong with the physical checks because both are "the level is playable"
 -- claims. `transitions` is the level's declared list; without it we can only
 -- check internal consistency.
-function Qa.exits(plan: any, transitions: { any }?): { string }
+function Qa.exits(plan: any, transitions: { any }?, options: any?): { string }
 	local problems: { string } = {}
 	local declared: { [string]: boolean } = {}
 	for _, transition in ipairs(transitions or {}) do
@@ -424,6 +430,57 @@ function Qa.exits(plan: any, transitions: { any }?): { string }
 				problems,
 				"transition " .. tostring(transition.id) .. " has no real anchor"
 			)
+		end
+	end
+
+	-- Separation: the device cannot say which hint is true, so two exit-like
+	-- features must not both be reachable from the same place. Phenomena are
+	-- exempt — they are not places (ADR 0023).
+	local share = options and options.separationShare
+	if share ~= nil and share > 0 then
+		local nodesById: { [number]: any } = {}
+		local minX, minZ, maxX, maxZ = math.huge, math.huge, -math.huge, -math.huge
+		for _, node in ipairs(plan.nodes or {}) do
+			nodesById[node.id] = node
+			if node.level == 0 then
+				minX = math.min(minX, node.x)
+				minZ = math.min(minZ, node.z)
+				maxX = math.max(maxX, node.x + node.w)
+				maxZ = math.max(maxZ, node.z + node.d)
+			end
+		end
+		local separation = share * math.min(maxX - minX, maxZ - minZ)
+		local live = {}
+		for _, exit in ipairs(plan.exits or {}) do
+			if string.sub(tostring(exit.gate), 1, 10) ~= "phenomenon" then
+				local host = nodesById[exit.anchor.hostNode or 0]
+				if host ~= nil then
+					table.insert(live, {
+						name = (if exit.decoy then "decoy " else "exit ") .. tostring(exit.id),
+						x = host.x + host.w / 2,
+						z = host.z + host.d / 2,
+					})
+				end
+			end
+		end
+		for i = 1, #live do
+			for j = i + 1, #live do
+				local dx = live[i].x - live[j].x
+				local dz = live[i].z - live[j].z
+				local distance = math.sqrt(dx * dx + dz * dz)
+				if distance < separation then
+					table.insert(
+						problems,
+						string.format(
+							"%s and %s are %.0f studs apart (< %.0f)",
+							live[i].name,
+							live[j].name,
+							distance,
+							separation
+						)
+					)
+				end
+			end
 		end
 	end
 

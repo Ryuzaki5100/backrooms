@@ -6,11 +6,8 @@ local Macro = require("../../src/shared/procgen/Macro")
 local Plan = require("../../src/shared/procgen/Plan")
 local Level0 = require("../../src/config/levels/Level_0")
 
-local OPTIONS = {
-	loops = Level0.generate.loops,
-	loopPreference = Level0.generate.loopPreference,
-	connectivity = Level0.generate.connectivity,
-}
+local Level = require("../support/level")
+local OPTIONS = Level.embedOptions()
 
 local function embed(seed: number): any
 	return Embedding.embed(Macro.build(Level0, seed), OPTIONS)
@@ -64,7 +61,9 @@ H.test("loops are realised from spare shared walls", function()
 		end
 	end
 	H.ok(loops >= 1, "at least one loop")
-	H.ok(loops <= Level0.generate.loops, "no more than the target")
+	local target =
+		math.max(Level0.generate.loops, math.floor(Level0.generate.loopShare * (#plan.nodes - 1)))
+	H.ok(loops <= target, "no more than the target")
 end)
 
 H.test("no two nodes overlap", function()
@@ -105,4 +104,20 @@ H.test("100 seeds embed, connect and validate", function()
 		end
 	end
 	H.eq(failures, 0, "failing seeds (" .. tostring(first) .. ")")
+end)
+
+H.test("loopShare yields a cyclic level, not a tree", function()
+	-- With no loops configured the packer may still find contacts, but the share
+	-- is the authored promise: a Level 0 that is a tree is not Level 0.
+	local loops = Embedding.embed(Macro.build(Level0, 42), {
+		loops = 0,
+		loopShare = Level0.generate.loopShare,
+		loopPreference = Level0.generate.loopPreference,
+		connectivity = Level0.generate.connectivity,
+	})
+	local spaces = #loops.nodes
+	local extra = #loops.edges - (spaces - 1)
+	local target = math.floor(Level0.generate.loopShare * (spaces - 1))
+	H.ok(extra > target * 0.8, "loops " .. extra .. " of target " .. target)
+	H.ok(extra > 20, "a 393-space level has real cycle density")
 end)

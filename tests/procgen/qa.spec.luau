@@ -7,13 +7,10 @@ local Macro = require("../../src/shared/procgen/Macro")
 local Qa = require("../../src/shared/procgen/Qa")
 local Level0 = require("../../src/config/levels/Level_0")
 
-local OPTIONS = {
-	loops = Level0.generate.loops,
-	loopPreference = Level0.generate.loopPreference,
-	connectivity = Level0.generate.connectivity,
-}
+local Level = require("../support/level")
+local OPTIONS = Level.embedOptions()
 
-local QA_OPTIONS = { style = Level0.style, transitions = Level0.transitions }
+local QA_OPTIONS = Level.qaOptions()
 
 local function build(seed: number): (any, { any })
 	local plan = Embedding.embed(Macro.build(Level0, seed), OPTIONS)
@@ -64,11 +61,17 @@ H.test("the harness catches a sealed doorway", function()
 	local target = openings[1]
 	H.ok(target ~= nil, "has a doorway to sabotage")
 
-	-- Wall the doorway over, exactly the failure mode that shipped.
+	-- Wall the doorway over, exactly the failure mode that shipped. The plug
+	-- must be thicker than the corner slop along the doorway's normal, or it is
+	-- indistinguishable from a wall meeting the frame at a T-junction.
+	local thicknessX = target.box.maxX - target.box.minX
+	local thicknessZ = target.box.maxZ - target.box.minZ
+	local plugX = if thicknessX < thicknessZ then thicknessX + 4 else thicknessX
+	local plugZ = if thicknessX < thicknessZ then thicknessZ else thicknessZ + 4
 	table.insert(parts, {
 		kind = "wall",
 		owner = "sabotage",
-		size = { target.box.maxX - target.box.minX, target.box.maxY - target.box.minY, 2 },
+		size = { plugX, target.box.maxY - target.box.minY, plugZ },
 		position = {
 			(target.box.minX + target.box.maxX) / 2,
 			(target.box.minY + target.box.maxY) / 2,
@@ -151,11 +154,14 @@ H.test("the strictest door policy still yields a connected level", function()
 		extraChance = 0,
 		sealedShare = 0,
 	}
-	local plan = Embedding.embed(Macro.build(config, 42), {
-		loops = config.generate.loops,
-		loopPreference = config.generate.loopPreference,
-		connectivity = config.generate.connectivity,
-	})
+	local plan = Embedding.embed(
+		Macro.build(config, 42),
+		Level.embedOptions({
+			loops = config.generate.loops,
+			loopShare = nil,
+			connectivity = config.generate.connectivity,
+		})
+	)
 	H.eq(#Embedding.validate(plan), 0, "still connected")
 	local parts = Geometry.describe(plan, { style = config.style })
 	H.eq(
@@ -220,4 +226,70 @@ H.test("a decoy that cannot do nothing is not a decoy", function()
 		end
 	end
 	H.ok(found, "outcome-less decoy is reported")
+end)
+
+H.test("exit-like features are separated from each other", function()
+	local plan = build(42)
+	local separation = Level0.generate.exitSeparationShare
+	local nodesById = {}
+	for _, node in ipairs(plan.nodes) do
+		nodesById[node.id] = node
+	end
+	local points = {}
+	for _, exit in ipairs(plan.exits) do
+		if string.sub(exit.gate, 1, 10) ~= "phenomenon" then
+			local host = nodesById[exit.anchor.hostNode]
+			table.insert(points, {
+				name = (if exit.decoy then "decoy " else "exit ") .. exit.id,
+				x = host.x + host.w / 2,
+				z = host.z + host.d / 2,
+			})
+		end
+	end
+	H.ok(#points > 4, "several exit-like features")
+	for i = 1, #points do
+		for j = i + 1, #points do
+			local dx = points[i].x - points[j].x
+			local dz = points[i].z - points[j].z
+			H.ok(
+				math.sqrt(dx * dx + dz * dz) >= separation,
+				points[i].name .. " / " .. points[j].name .. " are too close"
+			)
+		end
+	end
+end)
+
+H.test("a separation shortfall is reported, not ignored", function()
+	local plan = build(42)
+	local problems = Qa.exits(plan, Level0.transitions, { separationShare = 5 })
+	local found = false
+	for _, problem in ipairs(problems) do
+		if string.find(problem, "studs apart", 1, true) then
+			found = true
+		end
+	end
+	H.ok(found, "impossible separation is reported")
+end)
+
+H.test("phenomena are exempt from the separation rule", function()
+	-- A phenomenon can happen anywhere, so two of its anchors are allowed in the
+	-- same room; an action gate may not be.
+	local plan = build(42)
+	local phenomena = {}
+	for _, exit in ipairs(plan.exits) do
+		if string.sub(exit.gate, 1, 10) == "phenomenon" then
+			table.insert(phenomena, exit)
+		end
+	end
+	H.ok(#phenomena >= 2, "seed 42 has at least two phenomenon anchors")
+	phenomena[1].anchor.hostNode = phenomena[2].anchor.hostNode
+	H.eq(
+		#Qa.exits(
+			plan,
+			Level0.transitions,
+			{ separationShare = Level0.generate.exitSeparationShare }
+		),
+		0,
+		"stacked phenomena are not a violation"
+	)
 end)

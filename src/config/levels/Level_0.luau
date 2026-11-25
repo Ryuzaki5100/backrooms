@@ -11,9 +11,9 @@ return {
 			["min"] = 3,
 		},
 		["connectivity"] = {
-			["corridorBias"] = 0.85,
+			["corridorBias"] = 0.6,
 			["extraChance"] = 0,
-			["roomToRoom"] = 0.15,
+			["roomToRoom"] = 0.55,
 			["sealedShare"] = 0,
 		},
 		["connectorForms"] = {
@@ -27,26 +27,92 @@ return {
 			},
 		},
 		["corridors"] = {
-			["maxShare"] = 0.3,
-			["minShare"] = 0.2,
+			["maxShare"] = 0.14,
+			["minShare"] = 0.06,
 		},
 		["deadEnds"] = 3,
 		["decoys"] = {
-			["share"] = 0.2,
+			["share"] = 0.25,
 			["trapShare"] = 0.25,
 		},
+		["exitSeparationShare"] = 0.2,
 		["genMs"] = 1500,
+		["kindMix"] = {
+			["corridor"] = 0.09,
+			["hall"] = 0.01,
+			["room"] = 0.9,
+		},
 		["loopPreference"] = {
 			["corridor_corridor"] = 3,
 			["corridor_hall"] = 2,
 			["room_room"] = 1,
 			["vertical"] = 2,
 		},
+		["loopShare"] = 0.35,
 		["loops"] = 4,
 		["maxLevels"] = 1,
+		["openings"] = {
+			["height"] = 9,
+			["width"] = 10,
+		},
 		["regions"] = {
-			14,
-			22,
+			380,
+			460,
+		},
+		["sizes"] = {
+			["corridor"] = {
+				["d"] = {
+					24,
+					56,
+				},
+				["h"] = {
+					10,
+					12,
+				},
+				["w"] = {
+					8,
+					12,
+				},
+			},
+			["hall"] = {
+				["d"] = {
+					20,
+					32,
+				},
+				["h"] = {
+					12,
+					14,
+				},
+				["w"] = {
+					24,
+					36,
+				},
+			},
+			["room"] = {
+				["d"] = {
+					14,
+					24,
+				},
+				["h"] = {
+					10,
+					12,
+				},
+				["w"] = {
+					16,
+					28,
+				},
+			},
+			["shaft"] = {
+				["d"] = {
+					10,
+					10,
+				},
+				["h"] = 32,
+				["w"] = {
+					10,
+					10,
+				},
+			},
 		},
 		["tiles"] = 900,
 	},
@@ -84,16 +150,21 @@ return {
 			["weight"] = 1,
 		},
 	},
-	["schema"] = 5,
+	["schema"] = 6,
 	["source"] = {
 		["note"] = "60-lore/levels/level-0.md",
 		["revid"] = 1397338,
+	},
+	["style"] = {
+		["budget"] = {
+			["parts"] = 6000,
+		},
 	},
 	["tileset"] = "lobby",
 	["title"] = "Level 0: The Lobby",
 	["transitions"] = {
 		{
-			["gate"] = "phase_wall",
+			["gate"] = "phenomenon:phase_wall",
 			["id"] = "l0.phase-wall",
 			["outcomes"] = {
 				{

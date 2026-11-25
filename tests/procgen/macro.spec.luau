@@ -126,3 +126,25 @@ H.test("dead-end levels are rejected without transitions", function()
 	local ok = pcall(Macro.build, broken, 42)
 	H.ok(not ok, "should refuse a level with no transitions")
 end)
+
+H.test("configured sizes and heights are respected", function()
+	local plan = Macro.build(Level0, 42)
+	for _, node in ipairs(plan.nodes) do
+		local size = Level0.generate.sizes[node.kind]
+		if size ~= nil then
+			H.ok(node.w >= size.w[1] - 2 and node.w <= size.w[2] + 2, "width " .. node.kind)
+			H.ok(node.d >= size.d[1] - 2 and node.d <= size.d[2] + 2, "depth " .. node.kind)
+			H.ok(node.h >= size.h[1] and node.h <= size.h[2], "height " .. node.kind)
+		end
+	end
+end)
+
+H.test("Level 0 has the low ceilings its lore describes", function()
+	-- ADR 0013: the canonical photo is a low, wide space. If this drifts back to
+	-- office proportions, the level stops being Level 0.
+	local plan = Macro.build(Level0, 42)
+	for _, node in ipairs(plan.nodes) do
+		H.ok(node.h <= 14, node.kind .. " is " .. node.h .. " tall")
+	end
+	H.ok(plan.floorHeight <= 24, "floor height " .. plan.floorHeight)
+end)

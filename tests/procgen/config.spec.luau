@@ -110,7 +110,11 @@ H.test("codegen is deterministic and omits nulls", function()
 	local second = ConfigGen.render(level0, "config/levels/level-0.json")
 	H.eq(first, second)
 	H.eq(first:find("null", 1, true), nil, "no null literal")
-	H.eq(first:find("style", 1, true), nil, "null style omitted")
+	local bare = clone(level0)
+	bare.style = nil
+	local bareSource = ConfigGen.render(bare, "config/levels/level-0.json")
+	H.eq(bareSource:find("style", 1, true), nil, "null style omitted")
+	H.ok(first:find("style", 1, true) ~= nil, "authored style is emitted")
 end)
 
 H.test("generated module name is stable and safe", function()

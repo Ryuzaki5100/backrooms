@@ -26,7 +26,6 @@ local MIN_FLOOR = 16
 local MAX_FLOOR = 48
 local EPSILON = 0.5
 local MIN_OPENING = 8
-local ASPECT = 1.6
 
 local function round4(value: number): number
 	return math.floor((value + 3) / 4) * 4
@@ -75,33 +74,180 @@ end
 
 -- ------------------------------------------------------------------ packing
 
-local function packLevel(nodes: { any }, factor: number): ()
-	local sorted = table.clone(nodes)
-	table.sort(sorted, function(a: any, b: any)
-		if a.d ~= b.d then
-			return a.d > b.d
+-- Growth packing (ADR 0022).
+--
+-- The old packer sorted spaces by depth and filled rows. That is why a level
+-- read as "rooms beside each other": every space was a shelf neighbour of the
+-- next in a rectangle. Growth instead places one space at a time, flush against a
+-- free face of an already placed space, largest first. Adjacency still comes from
+-- real contact; the shape becomes an irregular mass with recesses and wings.
+--
+-- Corridors are placed before everything else and prefer to attach end-to-end,
+-- so circulation is grown as a spine and rooms hang off it rather than touching
+-- each other by default.
+
+local function overlapsAny(placed: { any }, node: any): boolean
+	for _, other in ipairs(placed) do
+		if overlaps(other, node) then
+			return true
+		end
+	end
+	return false
+end
+
+local function placementOrder(nodes: { any }): { any }
+	local corridors, rest = {}, {}
+	for _, node in ipairs(nodes) do
+		if node.kind == "corridor" then
+			table.insert(corridors, node)
+		else
+			table.insert(rest, node)
+		end
+	end
+	local function byArea(a: any, b: any)
+		local areaA, areaB = a.w * a.d, b.w * b.d
+		if areaA ~= areaB then
+			return areaA > areaB
 		end
 		return a.id < b.id
-	end)
-
-	local area = 0
-	for _, node in ipairs(sorted) do
-		area += node.w * node.d
 	end
-	local targetWidth = math.max(40, math.ceil(math.sqrt(area * ASPECT) * factor))
+	table.sort(corridors, byArea)
+	table.sort(rest, byArea)
+	local order = {}
+	table.move(corridors, 1, #corridors, 1, order)
+	table.move(rest, 1, #rest, #corridors + 1, order)
+	return order
+end
 
-	local x, z, rowDepth = 0, 0, 0
-	for _, node in ipairs(sorted) do
-		if x > 0 and x + node.w > targetWidth then
-			z += rowDepth
-			x = 0
-			rowDepth = 0
+local function hostPool(placed: { any }, kind: string, rng: any): { any }
+	local corridors = {}
+	for _, node in ipairs(placed) do
+		if node.kind == "corridor" then
+			table.insert(corridors, node)
 		end
-		node.x = x
-		node.z = z
-		x += node.w
-		rowDepth = math.max(rowDepth, node.d)
 	end
+	if kind == "corridor" then
+		-- Corridors grow the spine from other corridors.
+		return if #corridors > 0 then corridors else placed
+	end
+	-- Rooms hang off circulation most of the time, but not always: a room
+	-- reached through another room is part of the warren too.
+	if #corridors > 0 and rng:nextBool(0.75) then
+		return corridors
+	end
+	return placed
+end
+
+-- Score a placement by how many placed spaces it touches. A pack that only
+-- ever attaches one face per space is a tree, and a tree has no loops — which
+-- for Level 0 is the defining feature, not a nicety.
+local function contactCount(placed: { any }, node: any): number
+	local count = 0
+	for _, other in ipairs(placed) do
+		local sideA, sideB = touch(node, other)
+		if sideA ~= nil and sideB ~= nil then
+			count += 1
+		end
+	end
+	return count
+end
+
+-- `preferred` is the circulation spine; `placed` is everything. Sampling both
+-- matters: with only corridors as hosts every room hangs off the comb and no two
+-- rooms ever touch, which is exactly the tree we are trying to escape.
+local function tryAttach(
+	rng: any,
+	placed: { any },
+	node: any,
+	preferred: { any },
+	all: { any }
+): boolean
+	if #all == 0 then
+		return false
+	end
+	local bestContacts = -1
+	local best = {}
+	for attempt = 1, 24 do
+		local pool = if #preferred > 0 and attempt % 2 == 0 then preferred else all
+		local host = pool[rng:nextInt(#pool)]
+		local side = rng:nextInt(4)
+		if node.kind == "corridor" and side > 2 then
+			-- extend a corridor run along its long axis
+			side = if rng:nextBool(0.5) then 3 else 4
+		end
+		local x, z
+		if side == 1 then
+			x, z = host.x + host.w, host.z
+		elseif side == 2 then
+			x, z = host.x - node.w, host.z
+		elseif side == 3 then
+			x, z = host.x, host.z + host.d
+		else
+			x, z = host.x, host.z - node.d
+		end
+		local shared = if side == 1 or side == 2
+			then math.min(host.d, node.d)
+			else math.min(host.w, node.w)
+		if shared >= MIN_OPENING then
+			node.x, node.z = x, z
+			if not overlapsAny(placed, node) then
+				local contacts = contactCount(placed, node)
+				if contacts > bestContacts then
+					bestContacts = contacts
+					best = { { x, z } }
+				elseif contacts == bestContacts then
+					table.insert(best, { x, z })
+				end
+			end
+		end
+	end
+	if #best == 0 then
+		return false
+	end
+	local pick = best[rng:nextInt(#best)]
+	node.x, node.z = pick[1], pick[2]
+	return true
+end
+
+local function packLevel(nodes: { any }, rng: any): boolean
+	local placed = {}
+	local remaining = placementOrder(nodes)
+	local first = table.remove(remaining, 1)
+	if first == nil then
+		return true
+	end
+	first.x, first.z = 0, 0
+	table.insert(placed, first)
+
+	while #remaining > 0 do
+		local progressed = false
+		for index = #remaining, 1, -1 do
+			local node = remaining[index]
+			local preferred = hostPool(placed, node.kind, rng)
+			local attached = tryAttach(rng, placed, node, preferred, placed)
+			if attached then
+				table.insert(placed, node)
+				table.remove(remaining, index)
+				progressed = true
+			end
+		end
+		if not progressed then
+			return false
+		end
+	end
+	return true
+end
+
+local function bbox(nodes: { any }): (number, number, number, number)
+	local minX, minZ = math.huge, math.huge
+	local maxX, maxZ = -math.huge, -math.huge
+	for _, node in ipairs(nodes) do
+		minX = math.min(minX, node.x)
+		minZ = math.min(minZ, node.z)
+		maxX = math.max(maxX, node.x + node.w)
+		maxZ = math.max(maxZ, node.z + node.d)
+	end
+	return minX, minZ, maxX, maxZ
 end
 
 local function deriveAdjacency(nodes: { any }): { any }
@@ -125,20 +271,6 @@ local function deriveAdjacency(nodes: { any }): { any }
 	return edges
 end
 
-local function bbox(nodes: { any }): (number, number, number, number)
-	local minX, minZ = math.huge, math.huge
-	local maxX, maxZ = -math.huge, -math.huge
-	for _, node in ipairs(nodes) do
-		minX = math.min(minX, node.x)
-		minZ = math.min(minZ, node.z)
-		maxX = math.max(maxX, node.x + node.w)
-		maxZ = math.max(maxZ, node.z + node.d)
-	end
-	return minX, minZ, maxX, maxZ
-end
-
--- Translate whole components until the pack is one connected mass. Moving a
--- component preserves its internal adjacency, so this can only add connections.
 local function repairComponents(nodes: { any }, edges: { any }): number
 	for _ = 1, #nodes do
 		local parent: { [number]: number } = {}
@@ -214,13 +346,19 @@ local function loopWeight(a: any, b: any, preference: any): number
 	return 1
 end
 
-local function addPort(node: any, side: string, height: number, offset: number): number
+local function addPort(
+	node: any,
+	side: string,
+	height: number,
+	offset: number,
+	width: number?
+): number
 	local id = #node.ports + 1
 	table.insert(node.ports, {
 		id = id,
 		side = side,
 		offset = offset,
-		width = 4,
+		width = width or 4,
 		height = math.min(height, node.h),
 		elevation = 0,
 		kind = "door",
@@ -272,7 +410,8 @@ local function makeDoorPorts(
 	a: any,
 	sideA: string,
 	b: any,
-	sideB: string
+	sideB: string,
+	opening: any?
 ): (number?, number?)
 	local startA, lenA = overlapFor(a, sideA, b)
 	local startB, lenB = overlapFor(b, sideB, a)
@@ -281,12 +420,19 @@ local function makeDoorPorts(
 	end
 	local rng = Rng.new(plan.seed):fork("door:" .. a.id .. ":" .. b.id)
 	local t = rng:nextFloat()
-	local width = 4
+	local height = (opening and opening.height) or 8
+	local spanA = if sideA == "N" or sideA == "S" then a.w else a.d
+	local spanB = if sideB == "N" or sideB == "S" then b.w else b.d
+	-- A doorway cannot be wider than the face it is cut into. Without this a
+	-- short overlap produced a negative offset, which the codec rejects (u16).
+	local width = math.min((opening and opening.width) or 4, spanA, spanB)
 	-- Offsets are relative to each node's own face origin, which is what the
 	-- geometry layer reads.
 	local offsetA = doorOffsetFor(t, startA, lenA, width) - faceOrigin(a, sideA)
 	local offsetB = doorOffsetFor(t, startB, lenB, width) - faceOrigin(b, sideB)
-	return addPort(a, sideA, 8, offsetA), addPort(b, sideB, 8, offsetB)
+	offsetA = clamp(offsetA, 0, math.max(0, spanA - width))
+	offsetB = clamp(offsetB, 0, math.max(0, spanB - width))
+	return addPort(a, sideA, height, offsetA, width), addPort(b, sideB, height, offsetB, width)
 end
 
 local function buildDoors(plan: any, nodes: { any }, adjacency: { any }, options: any): ()
@@ -301,6 +447,7 @@ local function buildDoors(plan: any, nodes: { any }, adjacency: { any }, options
 	local extraChance = connectivity.extraChance or 0
 
 	local doorRng = Rng.new(plan.seed):fork("doors")
+	local openings = options.openings
 
 	-- How much the tree prefers a door onto this kind of space. A bias of 1
 	-- means "corridor whenever possible"; 0 means "plain BFS".
@@ -332,7 +479,7 @@ local function buildDoors(plan: any, nodes: { any }, adjacency: { any }, options
 		if used[edge.key] then
 			return false
 		end
-		local aPort, bPort = makeDoorPorts(plan, edge.a, edge.sideA, edge.b, edge.sideB)
+		local aPort, bPort = makeDoorPorts(plan, edge.a, edge.sideA, edge.b, edge.sideB, openings)
 		if aPort == nil then
 			return false
 		end
@@ -466,6 +613,185 @@ local function buildDoors(plan: any, nodes: { any }, adjacency: { any }, options
 	end
 end
 
+-- ------------------------------------------------------------- exit placement
+
+-- A phenomenon is not an action: a blackout or a phasing wall can happen
+-- anywhere, so its anchors are exempt from the separation rule. Everything with
+-- an action or trigger gate is a *place*, and two places that hint "this is a
+-- way out" must not sit next to each other — the device cannot tell the player
+-- which hint is real.
+local function isPhenomenon(gate: string): boolean
+	return string.sub(tostring(gate), 1, 10) == "phenomenon"
+end
+
+local function centre(node: any): (number, number)
+	return node.x + node.w / 2, node.z + node.d / 2
+end
+
+-- Greedy farthest-point placement: each exit goes to the room whose centre is
+-- furthest from everything already placed. Deterministic, no RNG, and it
+-- degrades gracefully — on a level that is too small it still spreads as far as
+-- the geometry allows, and QA reports the shortfall.
+local function placeExits(plan: any, share: number): ()
+	if share == nil or share <= 0 then
+		return
+	end
+	local candidates = {}
+	for _, node in ipairs(plan.nodes) do
+		if (node.kind == "room" or node.kind == "hall") and node.level == 0 then
+			table.insert(candidates, node)
+		end
+	end
+	if #candidates == 0 then
+		return
+	end
+	table.sort(candidates, function(a: any, b: any)
+		return a.id < b.id
+	end)
+
+	-- A stud value cannot be right at every scale: 120 studs is generous on a
+	-- 400-stud level and nothing on a 4,000-stud one. The authored value is a
+	-- share of the level's smaller extent, so "far apart" grows with the world.
+	local minX, minZ, maxX, maxZ = math.huge, math.huge, -math.huge, -math.huge
+	for _, node in ipairs(candidates) do
+		minX = math.min(minX, node.x)
+		minZ = math.min(minZ, node.z)
+		maxX = math.max(maxX, node.x + node.w)
+		maxZ = math.max(maxZ, node.z + node.d)
+	end
+	local extent = math.min(maxX - minX, maxZ - minZ)
+	local separation = share * extent
+	if separation <= 0 then
+		return
+	end
+
+	-- Deterministic order: real anchors first (by transition, then instance),
+	-- decoys last. Decoys then fill the gaps that are left.
+	local order = {}
+	for index, exit in ipairs(plan.exits or {}) do
+		table.insert(order, { exit = exit, index = index })
+	end
+	table.sort(order, function(a: any, b: any)
+		local aDecoy = if a.exit.decoy then 1 else 0
+		local bDecoy = if b.exit.decoy then 1 else 0
+		if aDecoy ~= bDecoy then
+			return aDecoy < bDecoy
+		end
+		if a.exit.id ~= b.exit.id then
+			return a.exit.id < b.exit.id
+		end
+		return a.index < b.index
+	end)
+
+	-- The spawn is the first reference point: exits sit away from where a run
+	-- starts, so a run always involves looking for one.
+	local spawn: any = nil
+	for _, node in ipairs(candidates) do
+		if node.id == plan.spawn.nodeId then
+			spawn = node
+		end
+	end
+	-- Position of each placed feature, by index into `order`. Phenomena are not
+	-- placed (they are exempt), so they have no entry.
+	-- `spots` is keyed by order index (holes for exempt phenomena); `placed` is
+	-- dense, because ipairs stops at the first hole.
+	local spots: { any } = {}
+	local placed: { any } = {}
+	local used: { [number]: boolean } = {}
+	table.sort(candidates, function(a: any, b: any)
+		return a.id < b.id
+	end)
+
+	local function nearestDistance(x: number, z: number, skip: any?): number
+		local nearest = math.huge
+		for _, spot in ipairs(placed) do
+			if spot ~= skip then
+				local dx, dz = x - spot.x, z - spot.z
+				nearest = math.min(nearest, math.sqrt(dx * dx + dz * dz))
+			end
+		end
+		return nearest
+	end
+
+	-- The spawn is a reference point: exits sit away from where a run starts.
+	local spawnX, spawnZ = nil, nil
+	for _, node in ipairs(candidates) do
+		if node.id == plan.spawn.nodeId then
+			spawnX, spawnZ = centre(node)
+			used[node.id] = true
+		end
+	end
+
+	-- Greedy farthest-point: each feature goes to the room furthest from
+	-- everything already placed.
+	for index, item in ipairs(order) do
+		if not isPhenomenon(item.exit.gate) then
+			local bestNode, bestKey = nil, -1
+			for _, node in ipairs(candidates) do
+				if not used[node.id] then
+					local x, z = centre(node)
+					local key = nearestDistance(x, z)
+					if spawnX ~= nil then
+						local dx, dz = x - spawnX, z - spawnZ
+						key = math.min(key, math.sqrt(dx * dx + dz * dz))
+					end
+					if key > bestKey then
+						bestKey = key
+						bestNode = node
+					end
+				end
+			end
+			if bestNode ~= nil then
+				used[bestNode.id] = true
+				local x, z = centre(bestNode)
+				local spot = { nodeId = bestNode.id, x = x, z = z }
+				spots[index] = spot
+				table.insert(placed, spot)
+			end
+		end
+	end
+
+	-- Refinement: greedy insertion can leave one feature in a pocket while the
+	-- rest own the open space. Move the worst-off feature to the room that
+	-- maximises its own nearest neighbour, and repeat until it stops improving.
+	for _ = 1, 8 do
+		local improved = false
+		for _, spot in ipairs(placed) do
+			local before = nearestDistance(spot.x, spot.z, spot)
+			local bestNode, bestKey = nil, before
+			for _, node in ipairs(candidates) do
+				if not used[node.id] then
+					local x, z = centre(node)
+					local key = nearestDistance(x, z, spot)
+					if key > bestKey then
+						bestKey = key
+						bestNode = node
+					end
+				end
+			end
+			if bestNode ~= nil then
+				used[spot.nodeId] = nil
+				used[bestNode.id] = true
+				local x, z = centre(bestNode)
+				spot.nodeId = bestNode.id
+				spot.x, spot.z = x, z
+				improved = true
+			end
+		end
+		if not improved then
+			break
+		end
+	end
+
+	for index, item in ipairs(order) do
+		local spot = spots[index]
+		if spot ~= nil then
+			item.exit.anchor = item.exit.anchor or { kind = "spatial" }
+			item.exit.anchor.hostNode = spot.nodeId
+		end
+	end
+end
+
 function Embedding.embed(plan: any, options: any?): any
 	local opts = options or {}
 	local floorHeight = computeFloorHeight(plan.nodes)
@@ -494,20 +820,45 @@ function Embedding.embed(plan: any, options: any?): any
 		error("Embedding.embed: no ground-level nodes", 2)
 	end
 
-	-- Packing density is a knob: tighter packs create more shared walls, which
-	-- is where loops come from. Try progressively denser layouts until there are
-	-- enough spare adjacency pairs for the requested loops.
+	-- Loop demand: an absolute count, or a share of the spanning tree. A share is
+	-- the honest dial, because "4 loops" means something different on 18 spaces
+	-- and on 1,000.
 	local wantedLoops = opts.loops or 0
-	local adjacency = {}
-	local factors = { 1.0, 0.85, 0.7, 0.55 }
-	for _, factor in ipairs(factors) do
-		packLevel(ground, factor)
-		repairComponents(ground, adjacency)
-		adjacency = deriveAdjacency(ground)
-		if #adjacency - (#ground - 1) >= wantedLoops or factor == factors[#factors] then
-			break
+	if (opts.loopShare or 0) > 0 then
+		wantedLoops =
+			math.max(wantedLoops, math.floor(opts.loopShare * math.max(1, #ground - 1) + 0.5))
+	end
+
+	-- Growth packing is randomised, so a layout that cannot reach the loop
+	-- target is retried from a different fork. The best successful attempt wins.
+	table.sort(ground, function(a: any, b: any)
+		return a.id < b.id
+	end)
+	local best: any = nil
+	for attempt = 1, 8 do
+		local packed = packLevel(ground, Rng.new(plan.seed):fork("pack:" .. attempt))
+		if packed then
+			local candidate = deriveAdjacency(ground)
+			local snapshot = {}
+			for index, node in ipairs(ground) do
+				snapshot[index] = { node.x, node.z }
+			end
+			if best == nil or #candidate > #best.adjacency then
+				best = { adjacency = candidate, snapshot = snapshot }
+			end
+			if #candidate - (#ground - 1) >= wantedLoops then
+				break
+			end
 		end
 	end
+	if best == nil then
+		error("Embedding.embed: could not pack the level in 8 attempts", 2)
+	end
+	for index, node in ipairs(ground) do
+		node.x, node.z = best.snapshot[index][1], best.snapshot[index][2]
+	end
+	local adjacency = best.adjacency
+	repairComponents(ground, adjacency)
 
 	-- Upper floors stack above distinct ground nodes with the same footprint, so
 	-- they cannot overlap each other and their shaft is exactly vertical.
@@ -538,7 +889,16 @@ function Embedding.embed(plan: any, options: any?): any
 	out.floorHeight = floorHeight
 	out.plenum = PLENUM
 
-	buildDoors(out, ground, adjacency, opts)
+	buildDoors(out, ground, adjacency, {
+		loops = wantedLoops,
+		loopPreference = opts.loopPreference,
+		connectivity = opts.connectivity,
+		openings = opts.openings,
+	})
+
+	-- Exit placement needs real coordinates, so it happens after packing (see
+	-- placeExits below). Macro's assignment is only the standalone default.
+	placeExits(out, opts.exitSeparationShare or 0)
 
 	-- Vertical links: one per upper node, with U on the host and D on the upper.
 	local edgeId = #out.edges
