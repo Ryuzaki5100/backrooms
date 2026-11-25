@@ -23,7 +23,7 @@ local PLENUM = 4
 local MIN_FLOOR = 16
 local MAX_FLOOR = 48
 local EPSILON = 0.5
-local MIN_OPENING = 6
+local MIN_OPENING = 8
 local ASPECT = 1.6
 
 local function round4(value: number): number

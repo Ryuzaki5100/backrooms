@@ -284,16 +284,14 @@ function Geometry.describe(plan: any, options: any?): { any }
 			local aPort = a.ports[edge.aPort]
 			local bPort = b.ports[edge.bPort]
 			if aPort ~= nil and bPort ~= nil then
-				for _, pair in ipairs({
-					{
-						node = a,
-						side = aPort.side,
-						other = b,
-						port = aPort,
-						otherPort = bPort,
-						edge = edge,
-					},
-				}) do
+				-- BOTH endpoints must know the face is shared. Registering only `a`
+				-- let `b` build a solid wall across its own face, sealing every
+				-- doorway from the far side.
+				local pairsToRegister = {
+					{ node = a, side = aPort.side, other = b, port = aPort, otherPort = bPort },
+					{ node = b, side = bPort.side, other = a, port = bPort, otherPort = aPort },
+				}
+				for _, pair in ipairs(pairsToRegister) do
 					local key = pair.node.id .. ":" .. pair.side
 					shared[key] = shared[key] or {}
 					local start, len = overlapOn(pair.node, pair.side, pair.other)
@@ -411,6 +409,72 @@ function Geometry.describe(plan: any, options: any?): { any }
 	end
 
 	return parts
+end
+
+-- Doorway volumes, in world coordinates. Used by QA to assert that an opening
+-- is actually open (nothing walls it over) and that it fits a character.
+function Geometry.openings(plan: any, options: any?): { any }
+	local style = styleOf(options)
+	local openings = {}
+	local nodesById: { [number]: any } = {}
+	for _, node in ipairs(plan.nodes) do
+		nodesById[node.id] = node
+	end
+
+	for _, edge in ipairs(plan.edges) do
+		local a = nodesById[edge.a]
+		local b = nodesById[edge.b]
+		if a ~= nil and b ~= nil and a.level == b.level then
+			local aPort = a.ports[edge.aPort]
+			local bPort = b.ports[edge.bPort]
+			if aPort ~= nil and bPort ~= nil then
+				local start, len = overlapOn(a, aPort.side, b)
+				if start ~= nil and len ~= nil then
+					-- Same clamp the wall cutter applies, or the QA box and the
+					-- real hole disagree.
+					local width = math.min(aPort.width, len - 2 * MIN_OPENING)
+					local height = math.min(aPort.height, a.h)
+					local sill = math.max(0, math.min(aPort.elevation or 0, a.h - height))
+					local doorStart = start + (len - width) / 2
+					local side = aPort.side
+					local t = style.wallThickness
+					local rect = nil
+					if side == "N" or side == "S" then
+						local z = if side == "N" then a.z else a.z + a.d
+						rect = {
+							minX = a.x + doorStart,
+							maxX = a.x + doorStart + width,
+							minZ = z - t / 2,
+							maxZ = z + t / 2,
+							minY = a.y + sill,
+							maxY = a.y + sill + height,
+						}
+					else
+						local x = if side == "W" then a.x else a.x + a.w
+						rect = {
+							minX = x - t / 2,
+							maxX = x + t / 2,
+							minZ = a.z + doorStart,
+							maxZ = a.z + doorStart + width,
+							minY = a.y + sill,
+							maxY = a.y + sill + height,
+						}
+					end
+					if width >= MIN_OPENING then
+						table.insert(openings, {
+							edgeId = edge.id,
+							nodeId = a.id,
+							side = side,
+							width = width,
+							height = height,
+							box = rect,
+						})
+					end
+				end
+			end
+		end
+	end
+	return openings
 end
 
 function Geometry.fingerprint(parts: { any }): string

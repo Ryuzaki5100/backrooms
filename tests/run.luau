@@ -11,6 +11,7 @@ require("./procgen/plan-codec.spec")
 require("./procgen/macro.spec")
 require("./procgen/embedding.spec")
 require("./procgen/geometry.spec")
+require("./procgen/qa.spec")
 require("./procgen/config.spec")
 
 process.exit(Harness.run())
