@@ -177,3 +177,49 @@ H.test("perimeter walls close only the world edge", function()
 	})
 	H.eq(#edge - #plain, 2, "east edge and north edge")
 end)
+
+H.test("a ramp is a wedge and replaces the floor under it", function()
+	local layout = empty(6, 16)
+	layout.floorY[ChunkLayout.index(6, 3, 3)] = 4
+	layout.ramp[ChunkLayout.index(6, 3, 3)] = { axis = "x", dir = -1, lowY = 0, highY = 4 }
+	local parts = ChunkRenderer.describe(layout, { style = { budget = 300 } })
+
+	local ramp = nil
+	for _, part in ipairs(parts) do
+		if part.kind == "ramp" then
+			ramp = part
+		end
+	end
+	H.ok(ramp ~= nil, "has a ramp part")
+	H.eq(ramp.wedge, true, "a true wedge, not a box")
+	H.eq(ramp.size[2], 4, "rises exactly to the upper floor")
+	H.eq(ramp.position[2], 2, "centred between the planes")
+
+	local cx, cz = 2.5 * 16, 2.5 * 16
+	for _, part in ipairs(parts) do
+		if part.kind == "floor" then
+			local halfX, halfZ = part.size[1] / 2, part.size[3] / 2
+			local inside = math.abs(part.position[1] - cx) < halfX
+				and math.abs(part.position[3] - cz) < halfZ
+			H.ok(not inside, "no floor slab inside the ramp footprint")
+		end
+	end
+end)
+
+H.test("a one-stud rise gets a step, not a ramp", function()
+	local layout = empty(6, 16)
+	layout.floorY[ChunkLayout.index(6, 4, 3)] = 1
+	local parts = ChunkRenderer.describe(layout, { style = { budget = 300 } })
+	local steps, ramps = 0, 0
+	for _, part in ipairs(parts) do
+		if part.kind == "step" then
+			steps += 1
+			H.eq(part.size[2], 1, "step matches the rise")
+		elseif part.kind == "ramp" then
+			ramps += 1
+		end
+	end
+	-- A one-cell plateau has four edges, so four steps.
+	H.eq(steps, 4, "one step per edge of the raised cell")
+	H.eq(ramps, 0, "no ramp for a step")
+end)

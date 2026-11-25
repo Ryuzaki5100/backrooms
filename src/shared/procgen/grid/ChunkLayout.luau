@@ -30,15 +30,23 @@ export type Layout = {
 	cell: number,
 	-- 1..n, index = i + (j - 1) * n
 	solid: { boolean },
+	-- Interior height (ceilingY = floorY + height).
 	height: { number },
+	-- Top surface of the floor. 0 everywhere until terrain (ADR 0029).
+	floorY: { number },
+	-- nil, or { axis = "x"|"z", dir = 1|-1, lowY, highY }. The cell's floor is
+	-- replaced by a wedge; the ramp belongs to the higher side.
+	ramp: { any },
 	-- Only the owning side is stored: E and S. Storing the mirror (W/N) too let
 	-- the connectivity pass open one copy and leave the other, so borders
 	-- disagreed with themselves.
 	sealedE: { boolean },
 	sealedS: { boolean },
-	-- Heights across the east and south borders, for wall height only.
+	-- Heights and floor levels across the east and south borders, for wall spans.
 	outHeightE: { number },
 	outHeightS: { number },
+	outFloorE: { number },
+	outFloorS: { number },
 	details: { Detail },
 }
 
@@ -54,21 +62,28 @@ function Layout.new(cx: number, cz: number, n: number, cell: number): Layout
 		cell = cell,
 		solid = {},
 		height = {},
+		floorY = {},
+		ramp = {},
 		sealedE = {},
 		sealedS = {},
 		outHeightE = {},
 		outHeightS = {},
+		outFloorE = {},
+		outFloorS = {},
 		details = {},
 	}
 	for index = 1, n * n do
 		layout.solid[index] = false
 		layout.height[index] = 0
+		layout.floorY[index] = 0
 		layout.sealedE[index] = false
 		layout.sealedS[index] = false
 	end
 	for j = 1, n do
 		layout.outHeightE[j] = 0
 		layout.outHeightS[j] = 0
+		layout.outFloorE[j] = 0
+		layout.outFloorS[j] = 0
 	end
 	return layout
 end

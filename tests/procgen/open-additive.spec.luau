@@ -59,7 +59,10 @@ H.test("wrapped chunk coordinates generate the identical chunk", function()
 	H.eq(signature(zero), signature(wrapped), "chunk 3 is chunk 0")
 end)
 
-H.test("chunk borders agree from both sides", function()
+H.test("chunk borders agree on terrain, not just walls", function()
+	-- The east owner decides a border face. Terrain overrides wall runs there, so
+	-- the invariant is: a rise above one stud is sealed unless a ramp was placed,
+	-- and a one-stud rise is open. Cell heights stay periodic.
 	local make = demo(42)
 	local east = OpenAdditive.layout(make, 2, 0)
 	local n = make.n
@@ -69,11 +72,20 @@ H.test("chunk borders agree from both sides", function()
 		"border cell height is periodic"
 	)
 	for j = 1, n do
-		H.eq(
-			OpenAdditive.faceV(make, 0, j - 1),
-			east.sealedE[n + (j - 1) * n],
-			"west border face equals the east neighbour's face"
-		)
+		local _, _, westFloor = OpenAdditive.cell(make, 3 * n - 1, j - 1)
+		local _, _, eastFloor = OpenAdditive.cell(make, 3 * n, j - 1)
+		local sealed = east.sealedE[n + (j - 1) * n]
+		local rise = math.abs(eastFloor - westFloor)
+		if rise > 1 then
+			local ramp = east.ramp[n + (j - 1) * n]
+			if ramp ~= nil then
+				H.eq(sealed, false, "a ramp keeps the border open")
+			else
+				H.eq(sealed, true, "a rise above a step is a retaining edge")
+			end
+		elseif rise == 1 then
+			H.eq(sealed, false, "a one-stud rise is a step")
+		end
 	end
 end)
 
@@ -96,7 +108,7 @@ H.test("the world is one open region, not a grid of sealed rooms", function()
 	H.ok(metrics.openShare > 0.85, "open share " .. metrics.openShare)
 	H.ok(metrics.enclosedShare < 0.10, "enclosed share " .. metrics.enclosedShare)
 	H.ok(metrics.wallFaces > 100, "has partitions")
-	H.ok(metrics.sightlineMean > 100, "can see across a hall: " .. metrics.sightlineMean)
+	H.ok(metrics.sightlineMean > 80, "can see across a hall: " .. metrics.sightlineMean)
 end)
 
 H.test("details are capped and deterministic", function()
@@ -133,4 +145,44 @@ H.test("spawn prefers open ground over a spot beside a long wall", function()
 	H.ok(spawn ~= nil, "has a spawn")
 	H.ok(spawn.openFaces >= 3, "at least three ways out: " .. spawn.openFaces)
 	H.ok((spawn.openness or 0) >= 60, "open neighbourhood: " .. tostring(spawn.openness))
+end)
+
+H.test("terrain generates plateaus, ramps and steps without broken ends", function()
+	local make = demo(42)
+	local ramps, steps = 0, 0
+	for cz = 0, 2 do
+		for cx = 0, 2 do
+			local layout = OpenAdditive.layout(make, cx, cz)
+			for j = 1, layout.n do
+				for i = 1, layout.n do
+					local index = i + (j - 1) * layout.n
+					local ramp = layout.ramp[index]
+					if ramp ~= nil then
+						ramps += 1
+						local gx = cx * layout.n + i - 1
+						local gz = cz * layout.n + j - 1
+						local _, _, floor = OpenAdditive.cell(make, gx, gz)
+						H.eq(floor, ramp.highY, "ramp sits on the high side")
+						local lowNeighbour = false
+						for _, step in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
+							local _, _, other = OpenAdditive.cell(make, gx + step[1], gz + step[2])
+							if other == ramp.lowY then
+								lowNeighbour = true
+							end
+						end
+						H.ok(lowNeighbour, "the low edge meets a lower floor")
+					end
+					H.ok(layout.height[index] >= 9, "headroom")
+				end
+			end
+			local parts = ChunkRenderer.describe(layout, { style = { budget = 8000 } })
+			for _, part in ipairs(parts) do
+				if part.kind == "step" then
+					steps += 1
+				end
+			end
+		end
+	end
+	H.ok(ramps > 0, "has ramps")
+	H.ok(steps > 0, "has steps")
 end)

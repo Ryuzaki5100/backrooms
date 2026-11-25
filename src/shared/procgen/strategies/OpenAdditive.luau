@@ -32,8 +32,16 @@ local DEFAULTS = {
 	detailChance = 0.4,
 }
 
+-- FNV over a coordinate string has poor avalanche: neighbouring coordinates
+-- differ in one byte and land within 0.004 of each other, so zone fields came
+-- out banded and some seeds had no terrain at all. A murmur-style finalizer
+-- fixes the low-entropy input without a new hash.
 local function hash01(seed: number, salt: string, a: number, b: number): number
-	return Hash.u32(seed .. ":" .. salt .. ":" .. a .. ":" .. b) / 4294967296
+	local h = Hash.u32(seed .. ":" .. salt .. ":" .. a .. ":" .. b)
+	h = Hash.mul32(bit32.bxor(h, bit32.rshift(h, 16)), 2246822507)
+	h = Hash.mul32(bit32.bxor(h, bit32.rshift(h, 13)), 3266489909)
+	h = bit32.bxor(h, bit32.rshift(h, 16))
+	return h / 4294967296
 end
 
 local function param(params: any, key: string, fallback: any): any
@@ -149,7 +157,36 @@ end
 
 -- Cell state ---------------------------------------------------------------
 
-function OpenAdditive.cell(make: any, gx: number, gz: number): (boolean, number)
+-- Terrain: a coarse zone field, not per-cell noise, so plateaus and sunken
+-- areas are large enough to walk on.
+local function terrainAt(make: any, gx: number, gz: number): number
+	local terrain = make.params.terrain
+	if terrain == nil then
+		return 0
+	end
+	local blocks = terrain.blocksPerZone or 2
+	local span = make.block * blocks
+	local bx = math.floor(canonical(make, gx) / span)
+	local bz = math.floor(canonical(make, gz) / span)
+	local roll = hash01(make.seed, "terrain", bx, bz)
+	local sunken = terrain.sunkenShare or 0.12
+	local plateau = terrain.plateauShare or 0.15
+	local level = terrain.level or 4
+	local stepLevel = terrain.stepLevel or 1
+	-- Shallow dips are decided first, so a dip zone is never swallowed by the
+	-- sunken/plateau bands. This is what guarantees steps exist per seed.
+	if hash01(make.seed, "shallow", bx, bz) < (terrain.shallowShare or 0.22) then
+		return -stepLevel
+	end
+	if roll < sunken then
+		return -level
+	elseif roll < sunken + plateau then
+		return level
+	end
+	return 0
+end
+
+function OpenAdditive.cell(make: any, gx: number, gz: number): (boolean, number, number)
 	local x = canonical(make, gx)
 	local z = canonical(make, gz)
 	local bx = math.floor(x / make.block)
@@ -157,7 +194,7 @@ function OpenAdditive.cell(make: any, gx: number, gz: number): (boolean, number)
 	local block = blockOf(make, x, z)
 	local li = x - bx * make.block
 	local lj = z - bz * make.block
-	return block.solid[li .. ":" .. lj] == true, block.height
+	return block.solid[li .. ":" .. lj] == true, block.height, terrainAt(make, x, z)
 end
 
 -- Vertical wall on the grid line `lineX`, at row `cellZ`.
@@ -560,15 +597,139 @@ function OpenAdditive.layout(make: any, cx: number, cz: number, options: any?): 
 	for j = 1, n do
 		for i = 1, n do
 			local gx, gz = originX + i - 1, originZ + j - 1
-			local solid, height = OpenAdditive.cell(make, gx, gz)
+			local solid, height, floorY = OpenAdditive.cell(make, gx, gz)
 			local index = Layout.index(n, i, j)
 			layout.solid[index] = solid
 			layout.height[index] = height
+			layout.floorY[index] = floorY
 			layout.sealedE[index] = OpenAdditive.faceV(make, gx + 1, gz)
 			layout.sealedS[index] = OpenAdditive.faceH(make, gx, gz + 1)
 		end
-		layout.outHeightE[j] = select(2, OpenAdditive.cell(make, originX + n, originZ + j - 1))
-		layout.outHeightS[j] = select(2, OpenAdditive.cell(make, originX + j - 1, originZ + n))
+		local outE = { OpenAdditive.cell(make, originX + n, originZ + j - 1) }
+		local outS = { OpenAdditive.cell(make, originX + j - 1, originZ + n) }
+		layout.outHeightE[j] = outE[2]
+		layout.outFloorE[j] = outE[3]
+		layout.outHeightS[j] = outS[2]
+		layout.outFloorS[j] = outS[3]
+	end
+
+	-- Terrain pass (ADR 0029): a rise above one stud is a retaining edge unless
+	-- a ramp can stand on the higher side and continue into the plateau. A ramp
+	-- replaces that cell's floor; the boundary stays open.
+	local terrain = make.params.terrain or {}
+	local stepMax = terrain.stepMax or 1
+	local minHeadroom = terrain.minHeadroom or 9
+
+	local function floorOf(i: number, j: number): number
+		if i < 1 or j < 1 or i > n or j > n then
+			local gx = originX + i - 1
+			local gz = originZ + j - 1
+			return select(3, OpenAdditive.cell(make, gx, gz))
+		end
+		return layout.floorY[Layout.index(n, i, j)]
+	end
+
+	local function placeRamp(
+		i: number,
+		j: number,
+		axis: string,
+		dir: number,
+		lowY: number,
+		highY: number
+	)
+		if i < 1 or j < 1 or i > n or j > n then
+			return false
+		end
+		local index = Layout.index(n, i, j)
+		if layout.ramp[index] ~= nil then
+			return false
+		end
+		layout.ramp[index] = { axis = axis, dir = dir, lowY = lowY, highY = highY }
+		return true
+	end
+
+	for j = 1, n do
+		for i = 1, n do
+			local index = Layout.index(n, i, j)
+			local here = layout.floorY[index]
+
+			-- east boundary
+			local east = floorOf(i + 1, j)
+			local diff = east - here
+			if diff ~= 0 then
+				if math.abs(diff) <= stepMax then
+					layout.sealedE[index] = false
+				else
+					local highIsHere = diff < 0
+					local rampI = if highIsHere then i else i + 1
+					local inward = if highIsHere then i - 1 else i + 2
+					local chosen = hash01(
+						make.seed,
+						"ramp:x",
+						canonical(make, originX + i - 1),
+						canonical(make, originZ + j - 1)
+					) < (terrain.rampChance or 0.35)
+					local placed = chosen
+						and placeRamp(
+							rampI,
+							j,
+							"x",
+							if highIsHere then -1 else 1,
+							math.min(here, east),
+							math.max(here, east)
+						)
+					if placed then
+						local inwardFloor = floorOf(inward, j)
+						if inwardFloor ~= layout.floorY[Layout.index(n, rampI, j)] then
+							-- The plateau does not continue: a ramp would end in mid-air.
+							layout.ramp[Layout.index(n, rampI, j)] = nil
+							placed = false
+						end
+					end
+					layout.sealedE[index] = not placed
+				end
+			end
+
+			-- south boundary
+			local south = floorOf(i, j + 1)
+			local diffS = south - here
+			if diffS ~= 0 then
+				if math.abs(diffS) <= stepMax then
+					layout.sealedS[index] = false
+				else
+					local highIsHere = diffS < 0
+					local rampJ = if highIsHere then j else j + 1
+					local inward = if highIsHere then j - 1 else j + 2
+					local chosen = hash01(
+						make.seed,
+						"ramp:z",
+						canonical(make, originX + i - 1),
+						canonical(make, originZ + j - 1)
+					) < (terrain.rampChance or 0.35)
+					local placed = chosen
+						and placeRamp(
+							i,
+							rampJ,
+							"z",
+							if highIsHere then -1 else 1,
+							math.min(here, south),
+							math.max(here, south)
+						)
+					if placed then
+						local inwardFloor = floorOf(i, inward)
+						if inwardFloor ~= layout.floorY[Layout.index(n, i, rampJ)] then
+							layout.ramp[Layout.index(n, i, rampJ)] = nil
+							placed = false
+						end
+					end
+					layout.sealedS[index] = not placed
+				end
+			end
+		end
+	end
+
+	for index = 1, n * n do
+		layout.height[index] = math.max(layout.height[index], minHeadroom)
 	end
 
 	connect(layout)

@@ -59,7 +59,8 @@ function Build.apply(parts: { any }, options: any?): Folder
 	folder.Name = FOLDER_NAME
 
 	for _, spec in ipairs(parts) do
-		local part = Instance.new("Part")
+		-- Ramps are true wedges (ADR 0029), not tilted boxes.
+		local part = Instance.new(if spec.wedge == true then "WedgePart" else "Part")
 		part.Name = tostring(spec.owner) .. "_" .. tostring(spec.kind)
 		part.Size = toVector(spec.size)
 		local cframe = CFrame.new(toVector(spec.position))

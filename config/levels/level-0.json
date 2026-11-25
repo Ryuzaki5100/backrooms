@@ -231,6 +231,16 @@
       "spawn": {
         "minOpenFaces": 3,
         "openRadiusCells": 4
+      },
+      "terrain": {
+        "level": 4,
+        "sunkenShare": 0.12,
+        "plateauShare": 0.16,
+        "blocksPerZone": 2,
+        "stepMax": 1,
+        "minHeadroom": 9,
+        "rampChance": 0.35,
+        "shallowShare": 0.22
       }
     }
   },

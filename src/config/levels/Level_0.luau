@@ -217,6 +217,16 @@ return {
 				["minOpenFaces"] = 3,
 				["openRadiusCells"] = 4,
 			},
+			["terrain"] = {
+				["blocksPerZone"] = 2,
+				["level"] = 4,
+				["minHeadroom"] = 9,
+				["plateauShare"] = 0.16,
+				["rampChance"] = 0.35,
+				["shallowShare"] = 0.22,
+				["stepMax"] = 1,
+				["sunkenShare"] = 0.12,
+			},
 		},
 	},
 	["style"] = {

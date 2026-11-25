@@ -52,7 +52,7 @@ local renderOptions = {
 }
 
 local layouts = {}
-local parts, totalMs, detailCount = 0, 0, 0
+local parts, totalMs, detailCount, rampCount, stepCount = 0, 0, 0, 0, 0
 for cz = 0, size.chunks - 1 do
 	for cx = 0, size.chunks - 1 do
 		local started = os.clock()
@@ -61,8 +61,19 @@ for cz = 0, size.chunks - 1 do
 		})
 		totalMs += (os.clock() - started) * 1000
 		layouts[cx .. ":" .. cz] = layout
-		parts += #ChunkRenderer.describe(layout, renderOptions)
+		local chunkParts = ChunkRenderer.describe(layout, renderOptions)
+		parts += #chunkParts
 		detailCount += #layout.details
+		for index = 1, layout.n * layout.n do
+			if layout.ramp[index] ~= nil then
+				rampCount += 1
+			end
+		end
+		for _, part in ipairs(chunkParts) do
+			if part.kind == "step" then
+				stepCount += 1
+			end
+		end
 	end
 end
 
@@ -111,11 +122,13 @@ print(
 )
 print(
 	string.format(
-		"wall faces %d (%.2f/cell)  parts %d (%.1f/chunk)  details %d  gen+render %.0f ms",
+		"wall faces %d (%.2f/cell)  parts %d (%.1f/chunk)  ramps %d  steps %d  details %d  gen+render %.0f ms",
 		metrics.wallFaces,
 		metrics.wallFaces / metrics.cells,
 		parts,
 		perChunk,
+		rampCount,
+		stepCount,
 		detailCount,
 		totalMs
 	)
