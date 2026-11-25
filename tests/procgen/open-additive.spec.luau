@@ -147,8 +147,23 @@ H.test("spawn prefers open ground over a spot beside a long wall", function()
 	H.ok((spawn.openness or 0) >= 60, "open neighbourhood: " .. tostring(spawn.openness))
 end)
 
-H.test("terrain generates plateaus, ramps and steps without broken ends", function()
-	local make = demo(42)
+H.test("terrain generates plateaus and sound ramps when enabled", function()
+	-- Level 0 ships flat; the ramp machinery is exercised by enabling terrain on
+	-- a clone, so a broken ramp is still caught without shipping one.
+	local config = clone(Level0)
+	config.world = clone(Level0.world)
+	config.world.worldSizeChunks = 3
+	config.world.boundaryMode = "wrap"
+	config.strategy = clone(Level0.strategy)
+	config.strategy.params = clone(Level0.strategy.params)
+	config.strategy.params.terrain = {
+		rise = 4,
+		plateauShare = 0.15,
+		sunkenShare = 0.15,
+		rampChance = 0.30,
+		minHeadroom = 9,
+	}
+	local make = OpenAdditive.world(config, 42)
 	local ramps = 0
 	for cz = 0, 2 do
 		for cx = 0, 2 do

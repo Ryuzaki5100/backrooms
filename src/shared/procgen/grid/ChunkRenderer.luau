@@ -506,7 +506,7 @@ local function hangWalls(
 	style: any
 ): ()
 	local n, cell, thickness = layout.n, layout.cell, style.wallThickness
-	local clearance = layout.hangClearance or 3
+	local depth = layout.hangDepth or 4
 
 	for i = 1, n do
 		local j = 1
@@ -517,7 +517,7 @@ local function hangWalls(
 				continue
 			end
 			local bottom, top = wallSpanE(layout, i, j)
-			local hangBottom = bottom + clearance
+			local hangBottom = top - depth
 			local start = j
 			while j + 1 <= n do
 				local nextIndex = idx(layout, i, j + 1)
@@ -525,7 +525,7 @@ local function hangWalls(
 					break
 				end
 				local nextBottom, nextTop = wallSpanE(layout, i, j + 1)
-				if nextBottom + clearance ~= hangBottom or nextTop ~= top then
+				if nextTop - depth ~= hangBottom or nextTop ~= top then
 					break
 				end
 				j += 1
@@ -550,7 +550,7 @@ local function hangWalls(
 				continue
 			end
 			local bottom, top = wallSpanS(layout, i, j)
-			local hangBottom = bottom + clearance
+			local hangBottom = top - depth
 			local start = i
 			while i + 1 <= n do
 				local nextIndex = idx(layout, i + 1, j)
@@ -558,7 +558,7 @@ local function hangWalls(
 					break
 				end
 				local nextBottom, nextTop = wallSpanS(layout, i + 1, j)
-				if nextBottom + clearance ~= hangBottom or nextTop ~= top then
+				if nextTop - depth ~= hangBottom or nextTop ~= top then
 					break
 				end
 				i += 1

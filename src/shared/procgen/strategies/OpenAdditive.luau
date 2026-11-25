@@ -773,8 +773,8 @@ function OpenAdditive.layout(make: any, cx: number, cz: number, options: any?): 
 						layout.columnStuds = pillar.columnStuds or 2
 					end
 				elseif roll < pillarShare + hangShare and not layout.solid[index] then
-					if layout.hangClearance == nil then
-						layout.hangClearance = hang.clearance or 3
+					if layout.hangDepth == nil then
+						layout.hangDepth = hang.depth or 4
 					end
 					local density = hang.density or 0.5
 					if

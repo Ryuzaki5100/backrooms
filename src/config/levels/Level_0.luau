@@ -198,9 +198,9 @@ return {
 			["chunkCells"] = 18,
 			["features"] = {
 				["hangingWall"] = {
-					["clearance"] = 3,
-					["density"] = 0.5,
-					["share"] = 0.05,
+					["density"] = 0.35,
+					["depth"] = 4,
+					["share"] = 0.02,
 				},
 				["pillarGrid"] = {
 					["columnStuds"] = 2,
@@ -211,9 +211,9 @@ return {
 			["hallBlocks"] = 2,
 			["hallShare"] = 0.22,
 			["heights"] = {
-				10,
 				12,
 				14,
+				16,
 			},
 			["pillarShare"] = 0.25,
 			["pillarSize"] = 2,
@@ -231,19 +231,10 @@ return {
 			},
 			["terrain"] = {
 				["minHeadroom"] = 9,
-				["plateauShare"] = {
-					["max"] = 0.15,
-					["min"] = 0.05,
-				},
-				["rampChance"] = {
-					["max"] = 0.2,
-					["min"] = 0.1,
-				},
+				["plateauShare"] = 0,
+				["rampChance"] = 0,
 				["rise"] = 4,
-				["sunkenShare"] = {
-					["max"] = 0.15,
-					["min"] = 0.05,
-				},
+				["sunkenShare"] = 0,
 			},
 		},
 	},

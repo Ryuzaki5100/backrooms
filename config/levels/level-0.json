@@ -224,9 +224,9 @@
       "hallShare": 0.22,
       "hallBlocks": 2,
       "heights": [
-        10,
         12,
-        14
+        14,
+        16
       ],
       "spawn": {
         "minOpenFaces": 3,
@@ -234,18 +234,9 @@
       },
       "terrain": {
         "rise": 4,
-        "plateauShare": {
-          "min": 0.05,
-          "max": 0.15
-        },
-        "sunkenShare": {
-          "min": 0.05,
-          "max": 0.15
-        },
-        "rampChance": {
-          "min": 0.1,
-          "max": 0.2
-        },
+        "plateauShare": 0,
+        "sunkenShare": 0,
+        "rampChance": 0,
         "minHeadroom": 9
       },
       "features": {
@@ -255,9 +246,9 @@
           "columnStuds": 2
         },
         "hangingWall": {
-          "share": 0.05,
-          "clearance": 3,
-          "density": 0.5
+          "share": 0.02,
+          "depth": 4,
+          "density": 0.35
         }
       }
     }
