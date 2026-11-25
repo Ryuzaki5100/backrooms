@@ -112,3 +112,27 @@ H.test("flood fill reaches every node", function()
 		H.ok(any, "node " .. tostring(node.id) .. " reachable")
 	end
 end)
+
+H.test("doors are not all centred on their walls", function()
+	local plan = build(42)
+	local centred, offCentre = 0, 0
+	for _, edge in ipairs(plan.edges) do
+		local a = nil
+		for _, node in ipairs(plan.nodes) do
+			if node.id == edge.a then
+				a = node
+			end
+		end
+		local port = a and a.ports[edge.aPort]
+		if port ~= nil then
+			local span = if port.side == "N" or port.side == "S" then a.w else a.d
+			local expected = (span - port.width) / 2
+			if math.abs(port.offset - expected) < 1 then
+				centred += 1
+			else
+				offCentre += 1
+			end
+		end
+	end
+	H.ok(offCentre > 0, "at least some doors are off-centre")
+end)

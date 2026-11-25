@@ -151,11 +151,128 @@ function Qa.reachable(plan: any, parts: { any }): (any, any)
 	return seen, problems
 end
 
+-- ------------------------------------------------------------ face coverage
+
+-- 2-D coverage: every cell of a face (along × height) must be wall or doorway.
+-- The 1-D version passed a 28-stud face with an 18-stud wall, which is exactly
+-- the "sky above the short room" bug.
+-- Two axes: the face PLANE (constant coordinate) and the ALONG axis (the span).
+local function facePlaneValue(node: any, side: string): (string, number)
+	if side == "N" then
+		return "z", node.z
+	elseif side == "S" then
+		return "z", node.z + node.d
+	elseif side == "W" then
+		return "x", node.x
+	end
+	return "x", node.x + node.w
+end
+
+local function alongAxisFor(side: string): string
+	return if side == "N" or side == "S" then "x" else "z"
+end
+
+local function faceLength(node: any, side: string): number
+	return if side == "N" or side == "S" then node.w else node.d
+end
+
+local function alongValue(part: any, axis: string): number
+	return if axis == "x" then part.position[1] else part.position[3]
+end
+
+local function alongSize(part: any, axis: string): number
+	return if axis == "x" then part.size[1] else part.size[3]
+end
+
+function Qa.coverage(plan: any, parts: { any }, options: any?): { string }
+	local problems: { string } = {}
+	local openings = Geometry.openings(plan, { style = options and options.style })
+
+	for _, node in ipairs(plan.nodes) do
+		for _, side in ipairs({ "N", "E", "S", "W" }) do
+			local planeAxis, plane = facePlaneValue(node, side)
+			local axis = alongAxisFor(side)
+			local length = faceLength(node, side)
+			local height = node.h
+			local cells: { [string]: boolean } = {}
+
+			local function mark(uStart: number, uLen: number, vStart: number, vLen: number)
+				local u0 = math.max(0, math.floor(uStart))
+				local u1 = math.min(length, math.ceil(uStart + uLen))
+				local v0 = math.max(0, math.floor(vStart))
+				local v1 = math.min(height, math.ceil(vStart + vLen))
+				for u = u0, u1 - 1 do
+					for v = v0, v1 - 1 do
+						cells[u .. ":" .. v] = true
+					end
+				end
+			end
+
+			-- Walls lying on this plane.
+			for _, part in ipairs(parts) do
+				if part.kind == "wall" and part.canCollide ~= false then
+					local planeValue = if planeAxis == "x"
+						then part.position[1]
+						else part.position[3]
+					if math.abs(planeValue - plane) < 0.6 then
+						local origin = if axis == "x" then node.x else node.z
+						local uStart = alongValue(part, axis) - alongSize(part, axis) / 2 - origin
+						local vStart = part.position[2] - part.size[2] / 2 - node.y
+						mark(uStart, alongSize(part, axis), vStart, part.size[2])
+					end
+				end
+			end
+
+			-- Legal holes: doorways on this plane.
+			for _, opening in ipairs(openings) do
+				local box = opening.box
+				local planeValue = if planeAxis == "x"
+					then (box.minX + box.maxX) / 2
+					else (box.minZ + box.maxZ) / 2
+				if math.abs(planeValue - plane) < 0.6 then
+					local origin = if axis == "x" then node.x else node.z
+					local uFrom = (if axis == "x" then box.minX else box.minZ) - origin
+					local uLen = (if axis == "x" then box.maxX - box.minX else box.maxZ - box.minZ)
+					mark(uFrom, uLen, box.minY - node.y, box.maxY - box.minY)
+				end
+			end
+
+			local missing = 0
+			for u = 0, math.ceil(length) - 1 do
+				for v = 0, math.ceil(height) - 1 do
+					if not cells[u .. ":" .. v] then
+						missing += 1
+					end
+				end
+			end
+			if missing > 0 then
+				table.insert(
+					problems,
+					string.format(
+						"node %d side %s: %d uncovered face cell(s) of %d×%d",
+						node.id,
+						side,
+						missing,
+						math.ceil(length),
+						math.ceil(height)
+					)
+				)
+			end
+		end
+	end
+
+	return problems
+end
+
 -- -------------------------------------------------------------------- checks
 
 function Qa.check(plan: any, parts: { any }, options: any?): { string }
 	local problems: { string } = {}
 	local style = options and options.style
+
+	for _, problem in ipairs(Qa.coverage(plan, parts, options)) do
+		table.insert(problems, problem)
+	end
 
 	-- Doorway clearance and fit.
 	local openings = Geometry.openings(plan, { style = style })

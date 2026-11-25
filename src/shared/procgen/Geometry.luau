@@ -184,13 +184,16 @@ local function solidWall(
 	side: string,
 	start: number,
 	len: number,
+	height: number,
 	thickness: number,
 	material: any
 ): ()
-	wallSlice(parts, owner, node, side, start, len, 0, node.h, thickness, material)
+	wallSlice(parts, owner, node, side, start, len, 0, height, thickness, material)
 end
 
--- A shared wall over one overlap interval, with the doorway cut in the middle.
+-- A shared wall over one overlap interval, cut at `desiredStart` (a port offset)
+-- rather than always in the middle. `wallHeight` is the height the two rooms
+-- share; anything taller belongs to the taller node as a party wall.
 local function doorway(
 	parts: { any },
 	owner: string,
@@ -198,21 +201,34 @@ local function doorway(
 	side: string,
 	start: number,
 	len: number,
+	wallHeight: number,
 	thickness: number,
 	material: any,
-	opening: any
+	opening: any,
+	desiredStart: number?
 ): ()
 	local width = math.min(opening.width, len - 2 * MIN_OPENING)
 	if width < MIN_OPENING then
-		-- Too narrow for a door: build a solid wall rather than leak.
-		solidWall(parts, owner, node, side, start, len, thickness, material)
+		solidWall(parts, owner, node, side, start, len, wallHeight, thickness, material)
 		return
 	end
-	local height = math.min(opening.height, node.h)
-	local sill = math.max(0, math.min(opening.elevation or 0, node.h - height))
-	local doorStart = start + (len - width) / 2
+	local height = math.min(opening.height, wallHeight)
+	local sill = math.max(0, math.min(opening.elevation or 0, wallHeight - height))
+	local maxStart = start + len - width
+	local doorStart = math.max(start, math.min(desiredStart or start, maxStart))
 
-	wallSlice(parts, owner, node, side, start, doorStart - start, 0, node.h, thickness, material)
+	wallSlice(
+		parts,
+		owner,
+		node,
+		side,
+		start,
+		doorStart - start,
+		0,
+		wallHeight,
+		thickness,
+		material
+	)
 	wallSlice(
 		parts,
 		owner,
@@ -221,7 +237,7 @@ local function doorway(
 		doorStart + width,
 		start + len - (doorStart + width),
 		0,
-		node.h,
+		wallHeight,
 		thickness,
 		material
 	)
@@ -233,7 +249,7 @@ local function doorway(
 		doorStart,
 		width,
 		sill + height,
-		node.h,
+		wallHeight,
 		thickness,
 		material
 	)
@@ -302,6 +318,7 @@ function Geometry.describe(plan: any, options: any?): { any }
 							edge = edge,
 							port = pair.port,
 							otherPort = pair.otherPort,
+							otherHeight = pair.other.h,
 						})
 					end
 				end
@@ -330,9 +347,29 @@ function Geometry.describe(plan: any, options: any?): { any }
 					side,
 					gap.start,
 					gap.len,
+					node.h,
 					style.wallThickness,
 					style.materials.wall
 				)
+			end
+			-- Party wall: the shared wall is only as tall as the shorter room, so
+			-- the taller node closes the band above it. Without this, a tall room
+			-- next to a short one is open to the sky.
+			for _, interval in ipairs(intervals) do
+				if node.h > interval.otherHeight then
+					wallSlice(
+						parts,
+						owner,
+						node,
+						side,
+						interval.start,
+						interval.len,
+						interval.otherHeight,
+						node.h,
+						style.wallThickness,
+						style.materials.wall
+					)
+				end
 			end
 		end
 	end
@@ -347,6 +384,7 @@ function Geometry.describe(plan: any, options: any?): { any }
 			if aPort ~= nil and bPort ~= nil then
 				local start, len = overlapOn(a, aPort.side, b)
 				if start ~= nil and len ~= nil then
+					local wallHeight = math.min(a.h, b.h)
 					doorway(
 						parts,
 						"edge:" .. tostring(edge.id),
@@ -354,13 +392,15 @@ function Geometry.describe(plan: any, options: any?): { any }
 						aPort.side,
 						start,
 						len,
+						wallHeight,
 						style.wallThickness,
 						style.materials.wall,
 						{
 							width = math.min(aPort.width, bPort.width),
-							height = math.min(aPort.height, bPort.height),
+							height = math.min(aPort.height, bPort.height, wallHeight),
 							elevation = math.min(aPort.elevation, bPort.elevation),
-						}
+						},
+						aPort.offset
 					)
 				end
 			end
@@ -432,10 +472,12 @@ function Geometry.openings(plan: any, options: any?): { any }
 				if start ~= nil and len ~= nil then
 					-- Same clamp the wall cutter applies, or the QA box and the
 					-- real hole disagree.
+					local wallHeight = math.min(a.h, b.h)
 					local width = math.min(aPort.width, len - 2 * MIN_OPENING)
-					local height = math.min(aPort.height, a.h)
-					local sill = math.max(0, math.min(aPort.elevation or 0, a.h - height))
-					local doorStart = start + (len - width) / 2
+					local height = math.min(aPort.height, wallHeight)
+					local sill = math.max(0, math.min(aPort.elevation or 0, wallHeight - height))
+					local maxStart = start + len - width
+					local doorStart = math.max(start, math.min(aPort.offset or start, maxStart))
 					local side = aPort.side
 					local t = style.wallThickness
 					local rect = nil

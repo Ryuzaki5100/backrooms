@@ -16,6 +16,8 @@
 --
 -- Pure Luau: no Roblox APIs.
 
+local Rng = if script ~= nil then require(script.Parent.Rng) else require("./Rng")
+
 local Embedding = {}
 
 local SLAB = 2
@@ -212,12 +214,12 @@ local function loopWeight(a: any, b: any, preference: any): number
 	return 1
 end
 
-local function addPort(node: any, side: string, height: number): number
+local function addPort(node: any, side: string, height: number, offset: number): number
 	local id = #node.ports + 1
 	table.insert(node.ports, {
 		id = id,
 		side = side,
-		offset = 0,
+		offset = offset,
 		width = 4,
 		height = math.min(height, node.h),
 		elevation = 0,
@@ -225,6 +227,66 @@ local function addPort(node: any, side: string, height: number): number
 		guard = "auto",
 	})
 	return id
+end
+
+local function faceOrigin(node: any, side: string): number
+	return if side == "N" or side == "S" then node.x else node.z
+end
+
+local function faceSpan(node: any, side: string): number
+	return if side == "N" or side == "S" then node.w else node.d
+end
+
+-- Where `other` sits on `node`'s face, in absolute face coordinates.
+local function overlapFor(node: any, side: string, other: any): (number?, number?)
+	local origin = faceOrigin(node, side)
+	local finishNode = origin + faceSpan(node, side)
+	local otherOrigin = faceOrigin(other, side)
+	local finishOther = otherOrigin + faceSpan(other, side)
+	local start = math.max(origin, otherOrigin)
+	local finish = math.min(finishNode, finishOther)
+	if finish - start < MIN_OPENING then
+		return nil, nil
+	end
+	return start, finish - start
+end
+
+-- Doors are placed inside their shared interval with a margin, from a per-edge
+-- fork, so they are not always centred. Stored in port.offset: the plan owns it.
+-- A door must keep clear of both ends of its overlap: the neighbouring room's
+-- wall is centred on the boundary and protrudes half a stud each way. If the
+-- overlap is too narrow for that, centre the door rather than putting it flush.
+local function doorOffsetFor(t: number, start: number, len: number, width: number): number
+	local clearance = 2
+	local low = start + clearance
+	local high = start + len - width - clearance
+	if high <= low then
+		return math.floor(start + (len - width) / 2 + 0.5)
+	end
+	return math.floor(low + t * (high - low) + 0.5)
+end
+
+-- Create the two ports of a doorway, with matching positions along the wall.
+local function makeDoorPorts(
+	plan: any,
+	a: any,
+	sideA: string,
+	b: any,
+	sideB: string
+): (number?, number?)
+	local startA, lenA = overlapFor(a, sideA, b)
+	local startB, lenB = overlapFor(b, sideB, a)
+	if startA == nil or startB == nil then
+		return nil, nil
+	end
+	local rng = Rng.new(plan.seed):fork("door:" .. a.id .. ":" .. b.id)
+	local t = rng:nextFloat()
+	local width = 4
+	-- Offsets are relative to each node's own face origin, which is what the
+	-- geometry layer reads.
+	local offsetA = doorOffsetFor(t, startA, lenA, width) - faceOrigin(a, sideA)
+	local offsetB = doorOffsetFor(t, startB, lenB, width) - faceOrigin(b, sideB)
+	return addPort(a, sideA, 8, offsetA), addPort(b, sideB, 8, offsetB)
 end
 
 local function buildDoors(plan: any, nodes: { any }, adjacency: { any }, options: any): ()
@@ -260,16 +322,19 @@ local function buildDoors(plan: any, nodes: { any }, adjacency: { any }, options
 					table.insert(queue, other.id)
 					used[edge.key] = true
 					edgeId += 1
-					local aPort = addPort(edge.a, edge.sideA, 8)
-					local bPort = addPort(edge.b, edge.sideB, 8)
-					table.insert(plan.edges, {
-						id = edgeId,
-						a = edge.a.id,
-						b = edge.b.id,
-						aPort = aPort,
-						bPort = bPort,
-						kind = "passage",
-					})
+					local aPort, bPort = makeDoorPorts(plan, edge.a, edge.sideA, edge.b, edge.sideB)
+					if aPort == nil then
+						edgeId -= 1
+					else
+						table.insert(plan.edges, {
+							id = edgeId,
+							a = edge.a.id,
+							b = edge.b.id,
+							aPort = aPort,
+							bPort = bPort,
+							kind = "passage",
+						})
+					end
 				end
 			end
 		end
@@ -294,16 +359,19 @@ local function buildDoors(plan: any, nodes: { any }, adjacency: { any }, options
 			used[edge.key] = true
 			loops -= 1
 			edgeId += 1
-			local aPort = addPort(edge.a, edge.sideA, 8)
-			local bPort = addPort(edge.b, edge.sideB, 8)
-			table.insert(plan.edges, {
-				id = edgeId,
-				a = edge.a.id,
-				b = edge.b.id,
-				aPort = aPort,
-				bPort = bPort,
-				kind = "loop",
-			})
+			local aPort, bPort = makeDoorPorts(plan, edge.a, edge.sideA, edge.b, edge.sideB)
+			if aPort == nil then
+				edgeId -= 1
+			else
+				table.insert(plan.edges, {
+					id = edgeId,
+					a = edge.a.id,
+					b = edge.b.id,
+					aPort = aPort,
+					bPort = bPort,
+					kind = "loop",
+				})
+			end
 		end
 	end
 end
