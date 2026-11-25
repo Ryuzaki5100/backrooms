@@ -65,7 +65,8 @@ H.test("a height change splits a wall run", function()
 	local parts = ChunkRenderer.describe(layout, { style = { budget = 200 } })
 	local walls = 0
 	for _, part in ipairs(parts) do
-		if part.kind == "wall" then
+		-- Only the run's own plane; other planes may carry soffits.
+		if part.kind == "wall" and part.position[1] == 3 * 16 and part.size[1] == 1 then
 			walls += 1
 		end
 	end
@@ -110,4 +111,69 @@ H.test("a 18x18 chunk stays inside the part budget", function()
 	end
 	local parts = ChunkRenderer.describe(layout, { style = { budget = 400 } })
 	H.ok(#parts <= 200, "dense chunk parts: " .. #parts)
+end)
+
+local function heightOf(part: any): number
+	return part.size[2]
+end
+
+H.test("an open height step gets a soffit, a sealed one does not", function()
+	local layout = empty(6, 16)
+	for j = 1, 6 do
+		for i = 1, 6 do
+			layout.height[ChunkLayout.index(6, i, j)] = 10
+		end
+	end
+	layout.height[ChunkLayout.index(6, 3, 3)] = 14
+
+	-- Open face between (2,3) and (3,3): the 4-stud band must be closed.
+	local openParts = ChunkRenderer.describe(layout, { style = { budget = 200 } })
+	local soffit = nil
+	for _, part in ipairs(openParts) do
+		if part.kind == "wall" and part.position[1] == 2 * 16 and part.size[2] == 4 then
+			soffit = part
+		end
+	end
+	H.ok(soffit ~= nil, "soffit closes the open height step")
+	H.eq(soffit.size[1], 1, "soffit is a wall slice")
+	H.eq(soffit.size[3], 16, "soffit spans one cell")
+
+	-- Seal the same face: the wall now spans the taller cell, no band is open.
+	layout.sealedE[ChunkLayout.index(6, 2, 3)] = true
+	local sealedParts = ChunkRenderer.describe(layout, { style = { budget = 200 } })
+	for _, part in ipairs(sealedParts) do
+		H.ok(
+			not (part.kind == "wall" and part.position[1] == 2 * 16 and part.size[2] == 4),
+			"a sealed face carries a full wall, not a soffit"
+		)
+	end
+end)
+
+H.test("perimeter walls close only the world edge", function()
+	local layout = empty(6, 16)
+	local plain = ChunkRenderer.describe(layout, { style = { budget = 200 } })
+
+	layout.cx, layout.cz = 0, 0
+	local corner = ChunkRenderer.describe(layout, {
+		style = { budget = 200 },
+		enclosure = "perimeter",
+		worldChunks = 3,
+	})
+	H.eq(#corner - #plain, 2, "corner chunk closes west and north")
+
+	layout.cx, layout.cz = 1, 1
+	local interior = ChunkRenderer.describe(layout, {
+		style = { budget = 200 },
+		enclosure = "perimeter",
+		worldChunks = 3,
+	})
+	H.eq(#interior, #plain, "interior chunk adds nothing")
+
+	layout.cx, layout.cz = 2, 0
+	local edge = ChunkRenderer.describe(layout, {
+		style = { budget = 200 },
+		enclosure = "perimeter",
+		worldChunks = 3,
+	})
+	H.eq(#edge - #plain, 2, "east edge and north edge")
 end)

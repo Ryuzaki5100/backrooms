@@ -182,6 +182,7 @@ return {
 			["parts"] = 8000,
 		},
 		["ceiling"] = "slab",
+		["enclosure"] = "none",
 		["maxLoadedParts"] = 8000,
 	},
 	["schema"] = 7,
@@ -211,6 +212,10 @@ return {
 			["runLength"] = {
 				2,
 				6,
+			},
+			["spawn"] = {
+				["minOpenFaces"] = 3,
+				["openRadiusCells"] = 4,
 			},
 		},
 	},

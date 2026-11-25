@@ -282,6 +282,186 @@ local function details(
 	end
 end
 
+-- Soffits (ADR 0028). Where two cells of different ceiling heights share an open
+-- face, the band between the lower ceiling and the higher one is a hole to the
+-- sky: you look over the low ceiling into the void above it. A soffit closes it,
+-- and reads as a bulkhead under a drop ceiling.
+local function soffits(
+	parts: { Part },
+	layout: any,
+	originX: number,
+	originZ: number,
+	style: any
+): ()
+	local n, cell, thickness = layout.n, layout.cell, style.wallThickness
+
+	local function heightE(i: number, j: number): (number, number)
+		local own = layout.height[LayoutModule.index(n, i, j)]
+		local other = if i == n
+			then layout.outHeightE[j]
+			else layout.height[LayoutModule.index(n, i + 1, j)]
+		return own, other
+	end
+
+	local function heightS(i: number, j: number): (number, number)
+		local own = layout.height[LayoutModule.index(n, i, j)]
+		local other = if j == n
+			then layout.outHeightS[i]
+			else layout.height[LayoutModule.index(n, i, j + 1)]
+		return own, other
+	end
+
+	for i = 1, n do
+		local j = 1
+		while j <= n do
+			local index = LayoutModule.index(n, i, j)
+			local own, other = heightE(i, j)
+			-- A height of 0 means "no neighbour known" (synthetic layouts); it must
+			-- not read as a 12-stud drop at the chunk border.
+			if layout.sealedE[index] or own == other or own == 0 or other == 0 then
+				j += 1
+				continue
+			end
+			local low, high = math.min(own, other), math.max(own, other)
+			local start = j
+			while j + 1 <= n do
+				local nextIndex = LayoutModule.index(n, i, j + 1)
+				local nextOwn, nextOther = heightE(i, j + 1)
+				if
+					layout.sealedE[nextIndex]
+					or nextOwn == nextOther
+					or math.min(nextOwn, nextOther) ~= low
+					or math.max(nextOwn, nextOther) ~= high
+				then
+					break
+				end
+				j += 1
+			end
+			local finish = j
+			local length = (finish - start + 1) * cell
+			add(
+				parts,
+				"wall",
+				"chunk:" .. layout.cx .. ":" .. layout.cz,
+				{ thickness, high - low, length },
+				{
+					originX + i * cell,
+					low + (high - low) / 2,
+					originZ + (start - 1) * cell + length / 2,
+				},
+				style.materials.wall
+			)
+			j += 1
+		end
+	end
+
+	for j = 1, n do
+		local i = 1
+		while i <= n do
+			local index = LayoutModule.index(n, i, j)
+			local own, other = heightS(i, j)
+			if layout.sealedS[index] or own == other or own == 0 or other == 0 then
+				i += 1
+				continue
+			end
+			local low, high = math.min(own, other), math.max(own, other)
+			local start = i
+			while i + 1 <= n do
+				local nextIndex = LayoutModule.index(n, i + 1, j)
+				local nextOwn, nextOther = heightS(i + 1, j)
+				if
+					layout.sealedS[nextIndex]
+					or nextOwn == nextOther
+					or math.min(nextOwn, nextOther) ~= low
+					or math.max(nextOwn, nextOther) ~= high
+				then
+					break
+				end
+				i += 1
+			end
+			local finish = i
+			local length = (finish - start + 1) * cell
+			add(
+				parts,
+				"wall",
+				"chunk:" .. layout.cx .. ":" .. layout.cz,
+				{ length, high - low, thickness },
+				{
+					originX + (start - 1) * cell + length / 2,
+					low + (high - low) / 2,
+					originZ + j * cell,
+				},
+				style.materials.wall
+			)
+			i += 1
+		end
+	end
+end
+
+-- Perimeter (ADR 0028): with `boundaryMode = "wall"` the world has a real edge,
+-- and the demo can be closed instead of showing sky. Wrap worlds never call this
+-- because their seam must stay open (the real fix is streaming ghosts, M19).
+local function perimeter(
+	parts: { Part },
+	layout: any,
+	originX: number,
+	originZ: number,
+	style: any,
+	worldChunks: number
+): ()
+	if worldChunks == nil then
+		return
+	end
+	local span = layout.n * layout.cell
+	local tallest = 0
+	for index = 1, layout.n * layout.n do
+		tallest = math.max(tallest, layout.height[index])
+	end
+	local owner = "chunk:" .. layout.cx .. ":" .. layout.cz
+	local thickness = style.wallThickness
+
+	if layout.cx == 0 then
+		add(
+			parts,
+			"wall",
+			owner,
+			{ thickness, tallest, span },
+			{ originX, tallest / 2, originZ + span / 2 },
+			style.materials.wall
+		)
+	end
+	if layout.cx == worldChunks - 1 then
+		add(
+			parts,
+			"wall",
+			owner,
+			{ thickness, tallest, span },
+			{ originX + span, tallest / 2, originZ + span / 2 },
+			style.materials.wall
+		)
+	end
+	if layout.cz == 0 then
+		add(
+			parts,
+			"wall",
+			owner,
+			{ span, tallest, thickness },
+			{ originX + span / 2, tallest / 2, originZ },
+			style.materials.wall
+		)
+	end
+	if layout.cz == worldChunks - 1 then
+		add(
+			parts,
+			"wall",
+			owner,
+			{ span, tallest, thickness },
+			{ originX + span / 2, tallest / 2, originZ + span },
+			style.materials.wall
+		)
+	end
+end
+
 function ChunkRenderer.describe(layout: any, options: any?): { Part }
 	local style = styleOf(options and options.style)
 	local parts: { Part } = {}
@@ -290,6 +470,10 @@ function ChunkRenderer.describe(layout: any, options: any?): { Part }
 	slabs(parts, layout, originX, originZ, style)
 	solids(parts, layout, originX, originZ, style)
 	walls(parts, layout, originX, originZ, style)
+	soffits(parts, layout, originX, originZ, style)
+	if options ~= nil and options.enclosure == "perimeter" then
+		perimeter(parts, layout, originX, originZ, style, options.worldChunks)
+	end
 	-- Details are layout data first: they are counted and reported whether or
 	-- not they have a prefab yet. Rendering them as bare plates in production
 	-- would put floating squares in the level, so they are debug-only until a

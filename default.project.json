@@ -34,24 +34,6 @@
     },
     "Workspace": {
       "$className": "Workspace",
-      "Baseplate": {
-        "$className": "Part",
-        "$properties": {
-          "Anchored": true,
-          "Size": [
-            512,
-            20,
-            512
-          ],
-          "Position": [
-            0,
-            -10,
-            0
-          ],
-          "TopSurface": "Smooth",
-          "BottomSurface": "Smooth"
-        }
-      },
       "SpawnLocation": {
         "$className": "SpawnLocation",
         "$properties": {

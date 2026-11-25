@@ -32,6 +32,11 @@ end
 local config = clone(Level0)
 config.world = clone(Level0.world)
 config.world.worldSizeChunks = worldChunks
+-- The demo is a closed room: the shipped level wraps, but a 3x3 inspection would
+-- otherwise show the stream boundary. Soffits (height steps) apply either way.
+config.world.boundaryMode = "wall"
+config.render = clone(Level0.render or {})
+config.render.enclosure = "perimeter"
 
 local size = World.resolve(config)
 local make = OpenAdditive.world(config, seed)
@@ -42,6 +47,8 @@ local renderOptions = {
 		budget = ((config.render or {}).budget or {}).parts or 8000,
 		materials = style.materials,
 	},
+	enclosure = (config.render or {}).enclosure,
+	worldChunks = size.chunks,
 }
 
 local layouts = {}
@@ -120,12 +127,13 @@ local spawn = OpenAdditive.spawn(make, layouts[centre .. ":" .. centre])
 if spawn ~= nil then
 	print(
 		string.format(
-			"spawn cell %d,%d  world %.0f,%.0f  open faces %d",
+			"spawn cell %d,%d  world %.0f,%.0f  open faces %d  openness %d",
 			spawn.cellX,
 			spawn.cellZ,
 			spawn.x,
 			spawn.z,
-			spawn.openFaces
+			spawn.openFaces,
+			spawn.openness or 0
 		)
 	)
 else

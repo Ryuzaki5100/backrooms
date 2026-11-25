@@ -616,22 +616,52 @@ function OpenAdditive.spawn(make: any, layout: any): any
 		return count
 	end
 
-	local centre = (n + 1) / 2
-	local best, bestScore = nil, -math.huge
-	for j = 1, n do
-		for i = 1, n do
-			local index = Layout.index(n, i, j)
-			if not layout.solid[index] and compId[index] == main then
-				local faces = openFaces(i, j)
-				local score = (if faces >= 2 then 100 else 0)
-					- math.abs(i - centre)
-					- math.abs(j - centre)
-					+ faces * 0.1
-				if score > bestScore then
-					bestScore = score
-					best = { i = i, j = j, faces = faces }
+	local spawnParams = make.params.spawn or {}
+	local minFaces = spawnParams.minOpenFaces or 3
+	local radius = spawnParams.openRadiusCells or 4
+
+	-- Local openness: how much floor is around the cell. A spawn next to a long
+	-- partition can look like it splits the level in two, so prefer open ground.
+	local function openness(i: number, j: number): number
+		local count = 0
+		for dz = -radius, radius do
+			for dx = -radius, radius do
+				local ni, nj = i + dx, j + dz
+				if ni >= 1 and nj >= 1 and ni <= n and nj <= n then
+					if not layout.solid[Layout.index(n, ni, nj)] then
+						count += 1
+					end
 				end
 			end
+		end
+		return count
+	end
+
+	local centre = (n + 1) / 2
+	local best = nil
+	for attempt = 1, 2 do
+		local need = if attempt == 1 then minFaces else 1
+		local bestScore = -math.huge
+		for j = 1, n do
+			for i = 1, n do
+				local index = Layout.index(n, i, j)
+				if not layout.solid[index] and compId[index] == main then
+					local faces = openFaces(i, j)
+					if faces >= need then
+						local score = openness(i, j) * 10
+							+ faces * 5
+							- math.abs(i - centre)
+							- math.abs(j - centre)
+						if score > bestScore then
+							bestScore = score
+							best = { i = i, j = j, faces = faces }
+						end
+					end
+				end
+			end
+		end
+		if best ~= nil then
+			break
 		end
 	end
 	if best == nil then
@@ -645,6 +675,7 @@ function OpenAdditive.spawn(make: any, layout: any): any
 		x = (gx + 0.5) * make.cell,
 		z = (gz + 0.5) * make.cell,
 		openFaces = best.faces,
+		openness = openness(best.i, best.j),
 	}
 end
 

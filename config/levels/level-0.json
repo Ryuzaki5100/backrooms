@@ -227,7 +227,11 @@
         10,
         12,
         14
-      ]
+      ],
+      "spawn": {
+        "minOpenFaces": 3,
+        "openRadiusCells": 4
+      }
     }
   },
   "world": {
@@ -252,7 +256,8 @@
       "parts": 8000
     },
     "ceiling": "slab",
-    "maxLoadedParts": 8000
+    "maxLoadedParts": 8000,
+    "enclosure": "none"
   },
   "details": [
     {
