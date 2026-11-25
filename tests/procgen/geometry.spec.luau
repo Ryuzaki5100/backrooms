@@ -188,3 +188,29 @@ H.test("QA markers exist only when debug is on", function()
 		return p.tag == "qa"
 	end) > 0, "debug has some")
 end)
+
+H.test("debug markers tell real anchors from decoys", function()
+	-- The whole point of the debug view is being able to see which exit-shaped
+	-- feature is bound and which is a lie, so they must differ in name and colour.
+	local plan = require("../../src/shared/procgen/Macro").build(Level0, 42)
+	local debug = Geometry.describe(plan, { style = Level0.style, debug = true })
+	local realColour, decoyColour = nil, nil
+	local realMarkers, decoyMarkers = 0, 0
+	for _, part in ipairs(debug) do
+		if part.tag == "qa" and part.owner ~= "spawn" then
+			if string.sub(part.owner, 1, 6) == "decoy:" then
+				decoyMarkers += 1
+				decoyColour = part.color
+			else
+				realMarkers += 1
+				realColour = part.color
+			end
+		end
+	end
+	H.ok(realMarkers > 0, "real anchors have markers")
+	H.ok(decoyMarkers > 0, "decoys have markers")
+	local function key(colour: any): string
+		return table.concat({ tostring(colour[1]), tostring(colour[2]), tostring(colour[3]) }, ",")
+	end
+	H.neq(key(realColour), key(decoyColour), "the two are distinguishable")
+end)

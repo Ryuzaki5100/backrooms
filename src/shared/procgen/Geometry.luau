@@ -424,13 +424,19 @@ function Geometry.describe(plan: any, options: any?): { any }
 		for _, exit in ipairs(plan.exits) do
 			local host = exit.anchor.hostNode and nodesById[exit.anchor.hostNode]
 			if host ~= nil then
+				-- Real anchors and decoys are both exit-shaped, so the debug view
+				-- has to tell them apart: orange can be taken, purple is a lie.
+				local decoy = exit.decoy == true
 				box(
 					parts,
 					"marker",
-					"exit:" .. tostring(exit.id),
+					(if decoy then "decoy:" else "exit:") .. tostring(exit.id),
 					{ 1.5, 1.5, 1.5 },
 					{ host.x + host.w / 2, host.y + host.h - 2, host.z + host.d / 2 },
-					{ material = "Neon", color = { 1, 0.4, 0.2 } },
+					{
+						material = "Neon",
+						color = if decoy then { 0.65, 0.25, 1 } else { 1, 0.4, 0.2 },
+					},
 					{ canCollide = false, tag = "qa" }
 				)
 			end

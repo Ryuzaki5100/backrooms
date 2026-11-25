@@ -1,5 +1,5 @@
 {
-  "schema": 4,
+  "schema": 5,
   "id": "level-0",
   "title": "Level 0: The Lobby",
   "dead_end": false,
@@ -42,6 +42,14 @@
       "roomToRoom": 0.15,
       "extraChance": 0.0,
       "sealedShare": 0.0
+    },
+    "anchors": {
+      "min": 3,
+      "max": 5
+    },
+    "decoys": {
+      "share": 0.2,
+      "trapShare": 0.25
     }
   },
   "tileset": "lobby",

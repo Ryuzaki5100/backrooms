@@ -97,6 +97,9 @@ export type Exit = {
 	resolve: string, -- seed | run | event
 	anchor: Anchor,
 	outcomes: { Outcome },
+	-- A decoy is an exit-shaped feature with no transition binding: it resolves
+	-- to `none` (usually) or a trap. It never grants mastery.
+	decoy: boolean?,
 }
 
 export type Spawn = {
@@ -161,6 +164,31 @@ end
 -- version. Not a fingerprint of the layout; `hash` is that.
 function Plan.identity(plan: Plan): string
 	return Seed.identity(plan.seed, plan.genVersion)
+end
+
+-- The transition ids a run can actually take. Decoys are exit-shaped features
+-- with no binding, so they must never appear here: mastery keys on this list.
+function Plan.masteryIds(plan: Plan): { string }
+	local seen: { [string]: boolean } = {}
+	local ids: { string } = {}
+	for _, exit in ipairs(plan.exits or {}) do
+		if not exit.decoy and not seen[exit.id] then
+			seen[exit.id] = true
+			table.insert(ids, exit.id)
+		end
+	end
+	table.sort(ids)
+	return ids
+end
+
+function Plan.anchorCount(plan: Plan, transitionId: string): number
+	local count = 0
+	for _, exit in ipairs(plan.exits or {}) do
+		if exit.id == transitionId and not exit.decoy then
+			count += 1
+		end
+	end
+	return count
 end
 
 return Plan

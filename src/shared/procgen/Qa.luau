@@ -274,6 +274,12 @@ function Qa.check(plan: any, parts: { any }, options: any?): { string }
 		table.insert(problems, problem)
 	end
 
+	if options and options.transitions then
+		for _, problem in ipairs(Qa.exits(plan, options.transitions)) do
+			table.insert(problems, problem)
+		end
+	end
+
 	-- Doorway clearance and fit.
 	local openings = Geometry.openings(plan, { style = style })
 	for _, opening in ipairs(openings) do
@@ -359,6 +365,65 @@ function Qa.check(plan: any, parts: { any }, options: any?): { string }
 	for _, exit in ipairs(plan.exits or {}) do
 		if exit.anchor.hostNode ~= nil and (doorCount[exit.anchor.hostNode] or 0) == 0 then
 			table.insert(problems, "exit " .. tostring(exit.id) .. " is anchored to a sealed node")
+		end
+	end
+
+	return problems
+end
+
+-- Exit-shape invariants. These are plan-level (no geometry needed), but they
+-- belong with the physical checks because both are "the level is playable"
+-- claims. `transitions` is the level's declared list; without it we can only
+-- check internal consistency.
+function Qa.exits(plan: any, transitions: { any }?): { string }
+	local problems: { string } = {}
+	local declared: { [string]: boolean } = {}
+	for _, transition in ipairs(transitions or {}) do
+		declared[transition.id] = true
+	end
+
+	local anchors: { [string]: number } = {}
+	for _, exit in ipairs(plan.exits or {}) do
+		if exit.decoy then
+			-- A decoy is unbound: it must not carry a real transition id, and it
+			-- must be able to resolve to nothing.
+			if declared[exit.id] then
+				table.insert(
+					problems,
+					"decoy " .. tostring(exit.id) .. " reuses a declared transition id"
+				)
+			end
+			local hasNone = false
+			for _, outcome in ipairs(exit.outcomes or {}) do
+				if outcome.kind == "none" then
+					hasNone = true
+				end
+			end
+			if not hasNone then
+				table.insert(
+					problems,
+					"decoy " .. tostring(exit.id) .. " has no 'none' outcome, so it is not a decoy"
+				)
+			end
+		else
+			if not declared[exit.id] then
+				table.insert(
+					problems,
+					"exit " .. tostring(exit.id) .. " is not a declared transition"
+				)
+			end
+			anchors[exit.id] = (anchors[exit.id] or 0) + 1
+		end
+	end
+
+	-- Mastery is only honest if every declared transition is actually reachable
+	-- in every seed (ADR 0006): at least one guaranteed, non-decoy anchor.
+	for _, transition in ipairs(transitions or {}) do
+		if (anchors[transition.id] or 0) < 1 then
+			table.insert(
+				problems,
+				"transition " .. tostring(transition.id) .. " has no real anchor"
+			)
 		end
 	end
 

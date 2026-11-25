@@ -19,7 +19,7 @@
     "schema": {
       "type": "integer",
       "enum": [
-        4
+        5
       ]
     },
     "id": {
@@ -209,6 +209,46 @@
               "maximum": 0.5
             }
           }
+        },
+        "anchors": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "min",
+            "max"
+          ],
+          "properties": {
+            "min": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 32
+            },
+            "max": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 32
+            }
+          }
+        },
+        "decoys": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "share",
+            "trapShare"
+          ],
+          "properties": {
+            "share": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "trapShare": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
         }
       }
     },
@@ -355,6 +395,26 @@
                     "kind": {
                       "enum": [
                         "void"
+                      ]
+                    },
+                    "weight": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1000
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "kind",
+                    "weight"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "none"
                       ]
                     },
                     "weight": {

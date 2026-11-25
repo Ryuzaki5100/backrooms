@@ -12,7 +12,7 @@
 --                          changes, so dressing updates keep the same building.
 
 local Version = {
-	CONFIG_SCHEMA_VERSION = 4,
+	CONFIG_SCHEMA_VERSION = 5,
 	PLAN_SCHEMA_VERSION = 4,
 	GEN_VERSION = 1,
 	MACRO_EPOCH = 1,

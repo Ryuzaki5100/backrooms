@@ -189,40 +189,119 @@ local function buildOnce(config: any, seed: number, attempt: number): (any?, str
 	end
 	table.insert(spawnNode.tags, "spawn")
 
-	local usedHosts: { [number]: boolean } = {}
 	local exits: { any } = {}
 	local transitions = table.clone(config.transitions or {})
 	table.sort(transitions, function(a: any, b: any)
 		return a.id < b.id
 	end)
 
-	for _, transition in ipairs(transitions) do
-		local host = nil
-		for _ = 1, 64 do
-			local candidate = nodes[rng:nextInt(#nodes)]
-			if isRoomish(candidate) and candidate.level == 0 and not usedHosts[candidate.id] then
-				host = candidate
-				break
+	local generateOpts = config.generate or {}
+	local anchorRange = generateOpts.anchors or { min = 1, max = 1 }
+	local decoyPolicy = generateOpts.decoys or { share = 0, trapShare = 0 }
+
+	local hostLoad: { [number]: number } = {}
+	local rooms: { any } = {}
+	for _, node in ipairs(nodes) do
+		if isRoomish(node) and node.level == 0 then
+			table.insert(rooms, node)
+			hostLoad[node.id] = 0
+		end
+	end
+
+	-- Pick the least-loaded host that is not already carrying one of this
+	-- transition's anchors. Spreading is what makes "keep wandering and you will
+	-- find another one" true; on a small level the pool runs out, and then we
+	-- reuse the emptiest room rather than failing.
+	local function pickHost(exclude: { [number]: boolean }?): any
+		local best: { any } = {}
+		local bestLoad = math.huge
+		for _, node in ipairs(rooms) do
+			if not (exclude and exclude[node.id]) then
+				local load = hostLoad[node.id] or 0
+				if load < bestLoad then
+					bestLoad = load
+					best = { node }
+				elseif load == bestLoad then
+					table.insert(best, node)
+				end
 			end
 		end
+		if #best == 0 then
+			for _, node in ipairs(rooms) do
+				local load = hostLoad[node.id] or 0
+				if load < bestLoad then
+					bestLoad = load
+					best = { node }
+				elseif load == bestLoad then
+					table.insert(best, node)
+				end
+			end
+		end
+		if #best == 0 then
+			return nil
+		end
+		local host = best[rng:nextInt(#best)]
+		hostLoad[host.id] = (hostLoad[host.id] or 0) + 1
+		return host
+	end
+
+	local function surfaceFor(gate: string): string
+		if string.find(gate, "vent", 1, true) then
+			return "ceiling"
+		elseif string.find(gate, "fall", 1, true) then
+			return "floor"
+		end
+		return "wall"
+	end
+
+	-- Real anchors: several instances per transition, so a run does not depend
+	-- on finding one specific place. Every transition keeps at least one.
+	for _, transition in ipairs(transitions) do
+		local anchorCount =
+			randBetween(rng, anchorRange.min or 1, anchorRange.max or (anchorRange.min or 1))
+		local used: { [number]: boolean } = {}
+		for _ = 1, anchorCount do
+			local host = pickHost(used)
+			if host == nil then
+				return nil, "no host for transition " .. tostring(transition.id)
+			end
+			used[host.id] = true
+			table.insert(exits, {
+				id = transition.id,
+				gate = transition.gate,
+				resolve = transition.resolve or "seed",
+				anchor = {
+					kind = "spatial",
+					hostNode = host.id,
+					surface = surfaceFor(transition.gate),
+				},
+				outcomes = resolveOutcome(seed, transition),
+			})
+		end
+	end
+
+	-- Decoys: exit-shaped features with no binding. They resolve to nothing or,
+	-- rarely, to a trap. They never grant mastery. They deliberately may share a
+	-- room with a real anchor: one of the two is a lie, and that is the point.
+	local decoyCount = math.floor(#nodes * (decoyPolicy.share or 0))
+	local trapShare = decoyPolicy.trapShare or 0
+	local trapWeight = math.max(1, math.floor(100 * trapShare))
+	for index = 1, decoyCount do
+		local host = pickHost()
 		if host == nil then
-			return nil, "no free host for transition " .. tostring(transition.id)
+			break
 		end
-		usedHosts[host.id] = true
-
-		local surface = "wall"
-		if string.find(transition.gate, "vent", 1, true) then
-			surface = "ceiling"
-		elseif string.find(transition.gate, "fall", 1, true) then
-			surface = "floor"
+		local outcomes = { { kind = "none", weight = 100 - trapWeight } }
+		if trapShare > 0 then
+			table.insert(outcomes, { kind = "void", weight = trapWeight })
 		end
-
 		table.insert(exits, {
-			id = transition.id,
-			gate = transition.gate,
-			resolve = transition.resolve or "seed",
-			anchor = { kind = "spatial", hostNode = host.id, surface = surface },
-			outcomes = resolveOutcome(seed, transition),
+			id = "decoy-" .. tostring(index),
+			gate = "decoy",
+			resolve = "event",
+			decoy = true,
+			anchor = { kind = "spatial", hostNode = host.id, surface = "wall" },
+			outcomes = outcomes,
 		})
 	end
 

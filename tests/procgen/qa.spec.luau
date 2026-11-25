@@ -13,6 +13,8 @@ local OPTIONS = {
 	connectivity = Level0.generate.connectivity,
 }
 
+local QA_OPTIONS = { style = Level0.style, transitions = Level0.transitions }
+
 local function build(seed: number): (any, { any })
 	local plan = Embedding.embed(Macro.build(Level0, seed), OPTIONS)
 	return plan, Geometry.describe(plan, { style = Level0.style })
@@ -20,7 +22,7 @@ end
 
 H.test("seed 42 passes every physical invariant", function()
 	local plan, parts = build(42)
-	local problems = Qa.check(plan, parts, { style = Level0.style })
+	local problems = Qa.check(plan, parts, QA_OPTIONS)
 	H.eq(#problems, 0, table.concat(problems, "; "))
 end)
 
@@ -28,7 +30,7 @@ H.test("every doorway is actually open", function()
 	local plan, parts = build(42)
 	local openings = Geometry.openings(plan, { style = Level0.style })
 	H.ok(#openings > 0, "has doorways")
-	local problems = Qa.check(plan, parts, { style = Level0.style })
+	local problems = Qa.check(plan, parts, QA_OPTIONS)
 	for _, problem in ipairs(problems) do
 		H.ok(not string.find(problem, "blocked", 1, true), problem)
 	end
@@ -46,7 +48,7 @@ H.test("30 seeds are physically valid", function()
 			failures += 1
 			first = first or ("seed " .. seed .. ": " .. tostring(plan))
 		else
-			local problems = Qa.check(plan, parts, { style = Level0.style })
+			local problems = Qa.check(plan, parts, QA_OPTIONS)
 			if #problems > 0 then
 				failures += 1
 				first = first or ("seed " .. seed .. ": " .. problems[1])
@@ -79,7 +81,7 @@ H.test("the harness catches a sealed doorway", function()
 		canCollide = true,
 	})
 
-	local problems = Qa.check(plan, parts, { style = Level0.style })
+	local problems = Qa.check(plan, parts, QA_OPTIONS)
 	local found = false
 	for _, problem in ipairs(problems) do
 		if string.find(problem, "blocked", 1, true) then
@@ -156,5 +158,66 @@ H.test("the strictest door policy still yields a connected level", function()
 	})
 	H.eq(#Embedding.validate(plan), 0, "still connected")
 	local parts = Geometry.describe(plan, { style = config.style })
-	H.eq(#Qa.check(plan, parts, { style = config.style }), 0, "still walkable")
+	H.eq(
+		#Qa.check(plan, parts, { style = config.style, transitions = config.transitions }),
+		0,
+		"still walkable"
+	)
+end)
+
+H.test("a transition with no real anchor is a build failure", function()
+	local plan, parts = build(42)
+	local target = Level0.transitions[1].id
+	local kept = {}
+	for _, exit in ipairs(plan.exits) do
+		if exit.id ~= target then
+			table.insert(kept, exit)
+		end
+	end
+	plan.exits = kept
+	local problems = Qa.check(plan, parts, QA_OPTIONS)
+	local found = false
+	for _, problem in ipairs(problems) do
+		if string.find(problem, target .. " has no real anchor", 1, true) then
+			found = true
+		end
+	end
+	H.ok(found, "missing anchor is reported")
+end)
+
+H.test("a decoy wearing a real transition id is a build failure", function()
+	local plan = build(42)
+	local target = Level0.transitions[1].id
+	for _, exit in ipairs(plan.exits) do
+		if exit.decoy then
+			exit.id = target
+			break
+		end
+	end
+	local problems = Qa.exits(plan, Level0.transitions)
+	local found = false
+	for _, problem in ipairs(problems) do
+		if string.find(problem, "reuses a declared transition id", 1, true) then
+			found = true
+		end
+	end
+	H.ok(found, "bound decoy is reported")
+end)
+
+H.test("a decoy that cannot do nothing is not a decoy", function()
+	local plan = build(42)
+	for _, exit in ipairs(plan.exits) do
+		if exit.decoy then
+			exit.outcomes = { { kind = "void", weight = 100 } }
+			break
+		end
+	end
+	local problems = Qa.exits(plan, Level0.transitions)
+	local found = false
+	for _, problem in ipairs(problems) do
+		if string.find(problem, "has no 'none' outcome", 1, true) then
+			found = true
+		end
+	end
+	H.ok(found, "outcome-less decoy is reported")
 end)

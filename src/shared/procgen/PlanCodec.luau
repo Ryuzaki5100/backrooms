@@ -38,8 +38,8 @@ local GUARDS = { auto = 1, open = 2, sealed = 3 }
 local GUARD_BY_INDEX = { "auto", "open", "sealed" }
 local ANCHORS = { spatial = 1, object = 2, actor = 3, global = 4 }
 local ANCHOR_BY_INDEX = { "spatial", "object", "actor", "global" }
-local OUTCOMES = { level = 1, node = 2, class = 3, void = 4 }
-local OUTCOME_BY_INDEX = { "level", "node", "class", "void" }
+local OUTCOMES = { level = 1, node = 2, class = 3, void = 4, none = 5 }
+local OUTCOME_BY_INDEX = { "level", "node", "class", "void", "none" }
 local RESOLVES = { seed = 1, run = 2, event = 3 }
 local RESOLVE_BY_INDEX = { "seed", "run", "event" }
 
@@ -263,6 +263,7 @@ local function encodeExit(exit: any): string
 		str(exit.gate, "exit.gate"),
 		encodeAnchor(exit.anchor),
 		u8(kindIndex, "exit.resolve"),
+		u8(if exit.decoy then 1 else 0, "exit.decoy"),
 		u8(#outcomes, "exit.outcomes"),
 	}
 	for _, outcome in ipairs(outcomes) do
@@ -570,6 +571,7 @@ function PlanCodec.decode(buffer: string): any
 		if resolve == nil then
 			error(string.format("PlanCodec: unknown resolve index %d", resolveIndex), 2)
 		end
+		local decoyFlag = readU8() == 1
 
 		local outcomes = {}
 		local outcomeCount = readU8()
@@ -604,13 +606,18 @@ function PlanCodec.decode(buffer: string): any
 			table.insert(outcomes, outcome)
 		end
 
-		table.insert(plan.exits, {
+		local exit = {
 			id = exitId,
 			gate = gate,
 			resolve = resolve,
 			anchor = anchor,
 			outcomes = outcomes,
-		})
+		}
+		-- Only present when true, so a decoded plan is deep-equal to the source.
+		if decoyFlag then
+			exit.decoy = true
+		end
+		table.insert(plan.exits, exit)
 	end
 
 	if pos <= #buffer then

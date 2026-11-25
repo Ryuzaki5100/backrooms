@@ -30,14 +30,85 @@ H.test("corridor share stays inside the configured band", function()
 	end
 end)
 
-H.test("every declared transition gets a host", function()
+H.test("every declared transition gets several anchors", function()
 	local plan = Macro.build(Level0, 42)
-	H.eq(#plan.exits, #Level0.transitions, "exit count")
-	local seen: { [string]: boolean } = {}
+	local range = Level0.generate.anchors
+	for _, transition in ipairs(Level0.transitions) do
+		local count = Plan.anchorCount(plan, transition.id)
+		H.ok(
+			count >= range.min,
+			transition.id .. " has " .. count .. " anchors, want >= " .. range.min
+		)
+		H.ok(
+			count <= range.max,
+			transition.id .. " has " .. count .. " anchors, want <= " .. range.max
+		)
+	end
 	for _, exit in ipairs(plan.exits) do
-		H.ok(not seen[exit.id], "unique exit id")
-		seen[exit.id] = true
 		H.ok(exit.anchor.hostNode ~= nil, "exit has a host")
+	end
+end)
+
+H.test("anchors of one transition are spread as widely as the rooms allow", function()
+	-- Finding one exit must not reveal another. On a small level the room pool
+	-- runs out, so the invariant is "no repeated host until every room has one".
+	local plan = Macro.build(Level0, 42)
+	local rooms = 0
+	for _, node in ipairs(plan.nodes) do
+		if (node.kind == "room" or node.kind == "hall") and node.level == 0 then
+			rooms += 1
+		end
+	end
+	for _, transition in ipairs(Level0.transitions) do
+		local hosts: { [number]: boolean } = {}
+		local count = 0
+		for _, exit in ipairs(plan.exits) do
+			if exit.id == transition.id and not exit.decoy then
+				count += 1
+				hosts[exit.anchor.hostNode] = true
+			end
+		end
+		local distinct = 0
+		for _ in pairs(hosts) do
+			distinct += 1
+		end
+		H.eq(distinct, math.min(count, rooms), transition.id .. " anchor spread")
+	end
+end)
+
+H.test("decoys exist, are unbound, and never grant mastery", function()
+	local plan = Macro.build(Level0, 42)
+	local decoys = 0
+	for _, exit in ipairs(plan.exits) do
+		if exit.decoy then
+			decoys += 1
+			H.ok(string.sub(exit.id, 1, 6) == "decoy-", "decoy id is tagged")
+			H.eq(exit.resolve, "event", "decoys resolve per use, not per seed")
+			local hasNone = false
+			for _, outcome in ipairs(exit.outcomes) do
+				if outcome.kind == "none" then
+					hasNone = true
+				end
+			end
+			H.ok(hasNone, "a decoy can do nothing")
+		end
+	end
+	H.ok(decoys > 0, "seed 42 has decoys when the level configures them")
+
+	local mastery = Plan.masteryIds(plan)
+	for _, id in ipairs(mastery) do
+		H.ok(string.sub(id, 1, 6) ~= "decoy-", "mastery excludes decoys")
+	end
+	H.eq(#mastery, #Level0.transitions, "mastery lists every declared transition once")
+end)
+
+H.test("decoys are absent when the level asks for none", function()
+	local config = table.clone(Level0)
+	config.generate = table.clone(Level0.generate)
+	config.generate.decoys = { share = 0, trapShare = 0 }
+	local plan = Macro.build(config, 42)
+	for _, exit in ipairs(plan.exits) do
+		H.ok(not exit.decoy, "no decoys at share 0")
 	end
 end)
 

@@ -6,6 +6,10 @@ return {
 	["dead_end"] = false,
 	["entities"] = {},
 	["generate"] = {
+		["anchors"] = {
+			["max"] = 5,
+			["min"] = 3,
+		},
 		["connectivity"] = {
 			["corridorBias"] = 0.85,
 			["extraChance"] = 0,
@@ -27,6 +31,10 @@ return {
 			["minShare"] = 0.2,
 		},
 		["deadEnds"] = 3,
+		["decoys"] = {
+			["share"] = 0.2,
+			["trapShare"] = 0.25,
+		},
 		["genMs"] = 1500,
 		["loopPreference"] = {
 			["corridor_corridor"] = 3,
@@ -76,7 +84,7 @@ return {
 			["weight"] = 1,
 		},
 	},
-	["schema"] = 4,
+	["schema"] = 5,
 	["source"] = {
 		["note"] = "60-lore/levels/level-0.md",
 		["revid"] = 1397338,
