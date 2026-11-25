@@ -110,7 +110,14 @@ local function makeNode(rng: any, id: number, kind: string, level: number): any
 	}
 end
 
-local function addPort(node: any, side: string, kind: string): number
+local function portHeight(kind: string, node: any, openings: any): number
+	if kind == "shaft" or kind == "drop" then
+		return node.h -- full face: a hole, not a doorway
+	end
+	return (openings and openings[kind]) or (openings and openings.door) or 8
+end
+
+local function addPort(node: any, side: string, kind: string, height: number): number
 	local elevated = side == "U" or side == "D"
 	local width = if elevated then 3 else 4
 	local span = if elevated then 0 elseif side == "N" or side == "S" then node.w else node.d
@@ -119,6 +126,7 @@ local function addPort(node: any, side: string, kind: string): number
 		side = side,
 		offset = if elevated then 0 else math.max(0, math.floor((span - width) / 2)),
 		width = width,
+		height = math.min(height, node.h),
 		elevation = 0,
 		kind = kind,
 		guard = "auto",
@@ -137,19 +145,30 @@ local function nextHorizontalSide(node: any): string
 	return HORIZONTAL_SIDES[(used % #HORIZONTAL_SIDES) + 1]
 end
 
-local function connect(edges: { any }, a: any, b: any, kind: string, vertical: boolean): boolean
+local function connect(
+	edges: { any },
+	a: any,
+	b: any,
+	kind: string,
+	vertical: boolean,
+	openings: any
+): boolean
 	if not canConnect(a) or not canConnect(b) then
 		return false
 	end
+	local aKind = if vertical then "shaft" else "door"
+	local bKind = if vertical then "drop" else "door"
 	local aPort = addPort(
 		a,
 		if vertical then "U" else nextHorizontalSide(a),
-		if vertical then "shaft" else "door"
+		aKind,
+		portHeight(aKind, a, openings)
 	)
 	local bPort = addPort(
 		b,
 		if vertical then "D" else nextHorizontalSide(b),
-		if vertical then "shaft" else "door"
+		bKind,
+		portHeight(bKind, b, openings)
 	)
 	table.insert(edges, {
 		id = #edges + 1,
@@ -203,6 +222,7 @@ local function buildOnce(config: any, seed: number, attempt: number): (any?, str
 	local maxLevels = generate.maxLevels or 1
 	local loopTarget = generate.loops or 0
 	local deadEndTarget = generate.deadEnds or 0
+	local openings = (config.style and config.style.openings) or nil
 
 	local nodes: { any } = {}
 	local edges: { any } = {}
@@ -242,7 +262,14 @@ local function buildOnce(config: any, seed: number, attempt: number): (any?, str
 			if parent ~= nil and canConnect(parent) and canConnect(child) then
 				local vertical = parent.level ~= child.level
 				if
-					connect(edges, parent, child, if vertical then "drop" else "passage", vertical)
+					connect(
+						edges,
+						parent,
+						child,
+						if vertical then "drop" else "passage",
+						vertical,
+						openings
+					)
 				then
 					attached = true
 					break
@@ -270,7 +297,7 @@ local function buildOnce(config: any, seed: number, attempt: number): (any?, str
 		local leaf = makeNode(rng, #nodes + 1, "room", workspace.level)
 		table.insert(leaf.tags, "dead-end")
 		table.insert(nodes, leaf)
-		if not connect(edges, workspace, leaf, "passage", false) then
+		if not connect(edges, workspace, leaf, "passage", false, openings) then
 			table.remove(nodes)
 		end
 	end
@@ -290,7 +317,7 @@ local function buildOnce(config: any, seed: number, attempt: number): (any?, str
 				and canConnect(a)
 				and canConnect(b)
 			then
-				if connect(edges, a, b, "passage", false) then
+				if connect(edges, a, b, "passage", false, openings) then
 					added = true
 					break
 				end

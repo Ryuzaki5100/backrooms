@@ -6,6 +6,9 @@
       "$className": "ServerScriptService",
       "NoclipBoot": {
         "$path": "src/server/NoclipBoot.server.luau"
+      },
+      "Procgen": {
+        "$path": "src/server/procgen"
       }
     },
     "ReplicatedStorage": {
@@ -35,8 +38,16 @@
         "$className": "Part",
         "$properties": {
           "Anchored": true,
-          "Size": [512, 20, 512],
-          "Position": [0, -10, 0],
+          "Size": [
+            512,
+            20,
+            512
+          ],
+          "Position": [
+            0,
+            -10,
+            0
+          ],
           "TopSurface": "Smooth",
           "BottomSurface": "Smooth"
         }
@@ -46,8 +57,16 @@
         "$properties": {
           "Anchored": true,
           "Neutral": true,
-          "Size": [12, 1, 12],
-          "Position": [0, 0.5, 0]
+          "Size": [
+            12,
+            1,
+            12
+          ],
+          "Position": [
+            0,
+            0.5,
+            0
+          ]
         }
       }
     },

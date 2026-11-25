@@ -130,6 +130,7 @@ local function encodePort(port: any): string
 		u8(sideIndex, "port.side"),
 		u16(port.offset, "port.offset"),
 		u8(port.width, "port.width"),
+		u16(port.height, "port.height"),
 		i32(port.elevation, "port.elevation"),
 		str(port.kind, "port.kind"),
 		u8(guardIndex, "port.guard"),
@@ -445,6 +446,7 @@ function PlanCodec.decode(buffer: string): any
 			end
 			local offset = readU16()
 			local width = readU8()
+			local height = readU16()
 			local elevation = readI32()
 			local portKind = readStr("port.kind")
 			local guardIndex = readU8()
@@ -457,6 +459,7 @@ function PlanCodec.decode(buffer: string): any
 				side = side,
 				offset = offset,
 				width = width,
+				height = height,
 				elevation = elevation,
 				kind = portKind,
 				guard = guard,

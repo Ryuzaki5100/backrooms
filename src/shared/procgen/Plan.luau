@@ -32,6 +32,7 @@ export type Port = {
 	side: Side,
 	offset: number,
 	width: number,
+	height: number, -- opening height in studs
 	elevation: number,
 	kind: string,
 	guard: Guard,
