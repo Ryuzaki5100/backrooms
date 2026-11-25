@@ -52,7 +52,8 @@ local renderOptions = {
 }
 
 local layouts = {}
-local parts, totalMs, detailCount, rampCount, stepCount = 0, 0, 0, 0, 0
+local parts, totalMs, detailCount, rampCount, stepCount, columnCount, hangCount =
+	0, 0, 0, 0, 0, 0, 0
 for cz = 0, size.chunks - 1 do
 	for cx = 0, size.chunks - 1 do
 		local started = os.clock()
@@ -67,6 +68,12 @@ for cz = 0, size.chunks - 1 do
 		for index = 1, layout.n * layout.n do
 			if layout.ramp[index] ~= nil then
 				rampCount += 1
+			end
+			if layout.column[index] then
+				columnCount += 1
+			end
+			if layout.hangE[index] or layout.hangS[index] then
+				hangCount += 1
 			end
 		end
 		for _, part in ipairs(chunkParts) do
@@ -122,13 +129,14 @@ print(
 )
 print(
 	string.format(
-		"wall faces %d (%.2f/cell)  parts %d (%.1f/chunk)  ramps %d  steps %d  details %d  gen+render %.0f ms",
+		"wall faces %d (%.2f/cell)  parts %d (%.1f/chunk)  ramps %d  columns %d  hang %d  details %d  gen+render %.0f ms",
 		metrics.wallFaces,
 		metrics.wallFaces / metrics.cells,
 		parts,
 		perChunk,
 		rampCount,
-		stepCount,
+		columnCount,
+		hangCount,
 		detailCount,
 		totalMs
 	)

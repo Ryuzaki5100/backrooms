@@ -233,14 +233,32 @@
         "openRadiusCells": 4
       },
       "terrain": {
-        "level": 4,
-        "sunkenShare": 0.12,
-        "plateauShare": 0.16,
-        "blocksPerZone": 2,
-        "stepMax": 1,
-        "minHeadroom": 9,
-        "rampChance": 0.35,
-        "shallowShare": 0.22
+        "rise": 4,
+        "plateauShare": {
+          "min": 0.05,
+          "max": 0.15
+        },
+        "sunkenShare": {
+          "min": 0.05,
+          "max": 0.15
+        },
+        "rampChance": {
+          "min": 0.1,
+          "max": 0.2
+        },
+        "minHeadroom": 9
+      },
+      "features": {
+        "pillarGrid": {
+          "share": 0.06,
+          "spacing": 2,
+          "columnStuds": 2
+        },
+        "hangingWall": {
+          "share": 0.05,
+          "clearance": 3,
+          "density": 0.5
+        }
       }
     }
   },

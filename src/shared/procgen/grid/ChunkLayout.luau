@@ -37,6 +37,11 @@ export type Layout = {
 	-- nil, or { axis = "x"|"z", dir = 1|-1, lowY, highY }. The cell's floor is
 	-- replaced by a wedge; the ramp belongs to the higher side.
 	ramp: { any },
+	-- A thin column at the cell centre (a pillar-grid zone).
+	column: { boolean },
+	-- A wall with a crouch gap under it: passable, but blocked above `clearance`.
+	hangE: { boolean },
+	hangS: { boolean },
 	-- Only the owning side is stored: E and S. Storing the mirror (W/N) too let
 	-- the connectivity pass open one copy and leave the other, so borders
 	-- disagreed with themselves.
@@ -64,6 +69,9 @@ function Layout.new(cx: number, cz: number, n: number, cell: number): Layout
 		height = {},
 		floorY = {},
 		ramp = {},
+		column = {},
+		hangE = {},
+		hangS = {},
 		sealedE = {},
 		sealedS = {},
 		outHeightE = {},
@@ -76,6 +84,9 @@ function Layout.new(cx: number, cz: number, n: number, cell: number): Layout
 		layout.solid[index] = false
 		layout.height[index] = 0
 		layout.floorY[index] = 0
+		layout.column[index] = false
+		layout.hangE[index] = false
+		layout.hangS[index] = false
 		layout.sealedE[index] = false
 		layout.sealedS[index] = false
 	end

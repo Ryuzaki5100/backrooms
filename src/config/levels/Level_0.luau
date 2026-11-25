@@ -196,6 +196,18 @@ return {
 			["block"] = 6,
 			["cell"] = 16,
 			["chunkCells"] = 18,
+			["features"] = {
+				["hangingWall"] = {
+					["clearance"] = 3,
+					["density"] = 0.5,
+					["share"] = 0.05,
+				},
+				["pillarGrid"] = {
+					["columnStuds"] = 2,
+					["share"] = 0.06,
+					["spacing"] = 2,
+				},
+			},
 			["hallBlocks"] = 2,
 			["hallShare"] = 0.22,
 			["heights"] = {
@@ -218,14 +230,20 @@ return {
 				["openRadiusCells"] = 4,
 			},
 			["terrain"] = {
-				["blocksPerZone"] = 2,
-				["level"] = 4,
 				["minHeadroom"] = 9,
-				["plateauShare"] = 0.16,
-				["rampChance"] = 0.35,
-				["shallowShare"] = 0.22,
-				["stepMax"] = 1,
-				["sunkenShare"] = 0.12,
+				["plateauShare"] = {
+					["max"] = 0.15,
+					["min"] = 0.05,
+				},
+				["rampChance"] = {
+					["max"] = 0.2,
+					["min"] = 0.1,
+				},
+				["rise"] = 4,
+				["sunkenShare"] = {
+					["max"] = 0.15,
+					["min"] = 0.05,
+				},
 			},
 		},
 	},

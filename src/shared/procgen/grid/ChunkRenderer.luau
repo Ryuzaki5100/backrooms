@@ -386,7 +386,13 @@ local function soffits(
 		while j <= n do
 			local own, other = ceilE(i, j)
 			local index = idx(layout, i, j)
-			if layout.sealedE[index] or own == other or own == 0 or other == 0 then
+			if
+				layout.sealedE[index]
+				or layout.hangE[index]
+				or own == other
+				or own == 0
+				or other == 0
+			then
 				j += 1
 				continue
 			end
@@ -423,7 +429,13 @@ local function soffits(
 		while i <= n do
 			local own, other = ceilS(i, j)
 			local index = idx(layout, i, j)
-			if layout.sealedS[index] or own == other or own == 0 or other == 0 then
+			if
+				layout.sealedS[index]
+				or layout.hangS[index]
+				or own == other
+				or own == 0
+				or other == 0
+			then
 				i += 1
 				continue
 			end
@@ -458,6 +470,111 @@ end
 
 -- Ramps: a true prism (WedgePart). The high edge meets the upper floor plane,
 -- the low edge the lower one, and the cell has no floor slab.
+-- Thin columns on a lattice (a pillar-grid zone). A column is one small part,
+-- not a solid cell.
+local function columns(
+	parts: { Part },
+	layout: any,
+	originX: number,
+	originZ: number,
+	style: any
+): ()
+	local n, cell = layout.n, layout.cell
+	local col = layout.columnStuds or 2
+	for j = 1, n do
+		for i = 1, n do
+			local index = idx(layout, i, j)
+			if layout.column[index] then
+				local level = floorAt(layout, i, j)
+				local height = layout.height[index]
+				add(parts, "column", ownerOf(layout), { col, height, col }, {
+					originX + (i - 0.5) * cell,
+					level + height / 2,
+					originZ + (j - 0.5) * cell,
+				}, style.materials.wall)
+			end
+		end
+	end
+end
+
+-- Hanging walls: a wall from `clearance` to the ceiling, so you crouch under it.
+local function hangWalls(
+	parts: { Part },
+	layout: any,
+	originX: number,
+	originZ: number,
+	style: any
+): ()
+	local n, cell, thickness = layout.n, layout.cell, style.wallThickness
+	local clearance = layout.hangClearance or 3
+
+	for i = 1, n do
+		local j = 1
+		while j <= n do
+			local startIndex = idx(layout, i, j)
+			if not layout.hangE[startIndex] then
+				j += 1
+				continue
+			end
+			local bottom, top = wallSpanE(layout, i, j)
+			local hangBottom = bottom + clearance
+			local start = j
+			while j + 1 <= n do
+				local nextIndex = idx(layout, i, j + 1)
+				if not layout.hangE[nextIndex] then
+					break
+				end
+				local nextBottom, nextTop = wallSpanE(layout, i, j + 1)
+				if nextBottom + clearance ~= hangBottom or nextTop ~= top then
+					break
+				end
+				j += 1
+			end
+			local finish = j
+			local length = (finish - start + 1) * cell
+			add(parts, "wall", ownerOf(layout), { thickness, top - hangBottom, length }, {
+				originX + i * cell,
+				hangBottom + (top - hangBottom) / 2,
+				originZ + (start - 1) * cell + length / 2,
+			}, style.materials.wall)
+			j += 1
+		end
+	end
+
+	for j = 1, n do
+		local i = 1
+		while i <= n do
+			local startIndex = idx(layout, i, j)
+			if not layout.hangS[startIndex] then
+				i += 1
+				continue
+			end
+			local bottom, top = wallSpanS(layout, i, j)
+			local hangBottom = bottom + clearance
+			local start = i
+			while i + 1 <= n do
+				local nextIndex = idx(layout, i + 1, j)
+				if not layout.hangS[nextIndex] then
+					break
+				end
+				local nextBottom, nextTop = wallSpanS(layout, i + 1, j)
+				if nextBottom + clearance ~= hangBottom or nextTop ~= top then
+					break
+				end
+				i += 1
+			end
+			local finish = i
+			local length = (finish - start + 1) * cell
+			add(parts, "wall", ownerOf(layout), { length, top - hangBottom, thickness }, {
+				originX + (start - 1) * cell + length / 2,
+				hangBottom + (top - hangBottom) / 2,
+				originZ + j * cell,
+			}, style.materials.wall)
+			i += 1
+		end
+	end
+end
+
 local function ramps(parts: { Part }, layout: any, originX: number, originZ: number, style: any): ()
 	local cell = layout.cell
 	for j = 1, layout.n do
@@ -626,6 +743,8 @@ function ChunkRenderer.describe(layout: any, options: any?): { Part }
 	solids(parts, layout, originX, originZ, style)
 	walls(parts, layout, originX, originZ, style)
 	soffits(parts, layout, originX, originZ, style)
+	hangWalls(parts, layout, originX, originZ, style)
+	columns(parts, layout, originX, originZ, style)
 	ramps(parts, layout, originX, originZ, style)
 	steps(parts, layout, originX, originZ, style)
 	if options ~= nil and options.enclosure == "perimeter" then

@@ -44,6 +44,28 @@ local function hash01(seed: number, salt: string, a: number, b: number): number
 	return h / 4294967296
 end
 
+-- A config value is either a number or a {min,max} band. Bands are drawn once
+-- per seed, so a level varies within its range but is never fixed nor out of it.
+local function bandValue(rng: any, value: any, fallback: number): number
+	if type(value) == "number" then
+		return value
+	end
+	if type(value) == "table" and value[1] ~= nil and value[2] ~= nil then
+		return value[1] + rng:nextFloat() * (value[2] - value[1])
+	end
+	return fallback
+end
+
+local function drawShares(seed: number, terrain: any): any
+	local rng = Rng.new(seed):fork("terrain")
+	local t = terrain or {}
+	return {
+		plateau = bandValue(rng, t.plateauShare, 0.10),
+		sunken = bandValue(rng, t.sunkenShare, 0.10),
+		rampChance = bandValue(rng, t.rampChance, 0.15),
+	}
+end
+
 local function param(params: any, key: string, fallback: any): any
 	local value = params[key]
 	if value == nil then
@@ -75,6 +97,7 @@ function OpenAdditive.world(config: any, seed: number): any
 		period = size.chunks * n,
 		boundary = boundary,
 		blocks = {},
+		terrainShares = drawShares(seed, params.terrain),
 	}
 end
 
@@ -169,18 +192,11 @@ local function terrainAt(make: any, gx: number, gz: number): number
 	local bx = math.floor(canonical(make, gx) / span)
 	local bz = math.floor(canonical(make, gz) / span)
 	local roll = hash01(make.seed, "terrain", bx, bz)
-	local sunken = terrain.sunkenShare or 0.12
-	local plateau = terrain.plateauShare or 0.15
+	local shares = make.terrainShares or { plateau = 0, sunken = 0 }
 	local level = terrain.level or 4
-	local stepLevel = terrain.stepLevel or 1
-	-- Shallow dips are decided first, so a dip zone is never swallowed by the
-	-- sunken/plateau bands. This is what guarantees steps exist per seed.
-	if hash01(make.seed, "shallow", bx, bz) < (terrain.shallowShare or 0.22) then
-		return -stepLevel
-	end
-	if roll < sunken then
+	if roll < shares.sunken then
 		return -level
-	elseif roll < sunken + plateau then
+	elseif roll < shares.sunken + shares.plateau then
 		return level
 	end
 	return 0
@@ -668,7 +684,7 @@ function OpenAdditive.layout(make: any, cx: number, cz: number, options: any?): 
 						"ramp:x",
 						canonical(make, originX + i - 1),
 						canonical(make, originZ + j - 1)
-					) < (terrain.rampChance or 0.35)
+					) < ((make.terrainShares and make.terrainShares.rampChance) or 0.15)
 					local placed = chosen
 						and placeRamp(
 							rampI,
@@ -705,7 +721,7 @@ function OpenAdditive.layout(make: any, cx: number, cz: number, options: any?): 
 						"ramp:z",
 						canonical(make, originX + i - 1),
 						canonical(make, originZ + j - 1)
-					) < (terrain.rampChance or 0.35)
+					) < ((make.terrainShares and make.terrainShares.rampChance) or 0.15)
 					local placed = chosen
 						and placeRamp(
 							i,
@@ -730,6 +746,64 @@ function OpenAdditive.layout(make: any, cx: number, cz: number, options: any?): 
 
 	for index = 1, n * n do
 		layout.height[index] = math.max(layout.height[index], minHeadroom)
+	end
+
+	-- Feature zones (pillar grids and hanging walls): a flat zone with a
+	-- structure standing on it, not another height.
+	local features = make.params.features or {}
+	if features.pillarGrid ~= nil or features.hangingWall ~= nil then
+		local pillar = features.pillarGrid or {}
+		local hang = features.hangingWall or {}
+		local pillarShare = pillar.share or 0
+		local hangShare = hang.share or 0
+		for j = 1, n do
+			for i = 1, n do
+				local index = Layout.index(n, i, j)
+				local gx = originX + i - 1
+				local gz = originZ + j - 1
+				local bx = math.floor(canonical(make, gx) / make.block)
+				local bz = math.floor(canonical(make, gz) / make.block)
+				local roll = hash01(make.seed, "feature", bx, bz)
+				if roll < pillarShare and not layout.solid[index] then
+					local spacing = pillar.spacing or 2
+					if (i - 1) % spacing == 0 and (j - 1) % spacing == 0 then
+						layout.column[index] = true
+					end
+					if layout.columnStuds == nil then
+						layout.columnStuds = pillar.columnStuds or 2
+					end
+				elseif roll < pillarShare + hangShare and not layout.solid[index] then
+					if layout.hangClearance == nil then
+						layout.hangClearance = hang.clearance or 3
+					end
+					local density = hang.density or 0.5
+					if
+						not layout.sealedE[index]
+						and hash01(
+								make.seed,
+								"hang:x",
+								canonical(make, gx),
+								canonical(make, gz)
+							)
+							< density
+					then
+						layout.hangE[index] = true
+					end
+					if
+						not layout.sealedS[index]
+						and hash01(
+								make.seed,
+								"hang:z",
+								canonical(make, gx),
+								canonical(make, gz)
+							)
+							< density
+					then
+						layout.hangS[index] = true
+					end
+				end
+			end
+		end
 	end
 
 	connect(layout)
