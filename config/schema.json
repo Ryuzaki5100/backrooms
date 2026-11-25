@@ -19,7 +19,7 @@
     "schema": {
       "type": "integer",
       "enum": [
-        2
+        3
       ]
     },
     "id": {
@@ -120,6 +120,55 @@
                 "minimum": 1,
                 "maximum": 100
               }
+            }
+          }
+        },
+        "corridors": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "minShare",
+            "maxShare"
+          ],
+          "properties": {
+            "minShare": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "maxShare": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        },
+        "loopPreference": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "corridor_corridor"
+          ],
+          "properties": {
+            "corridor_corridor": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "corridor_hall": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "vertical": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "room_room": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
             }
           }
         }

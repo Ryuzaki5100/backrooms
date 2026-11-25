@@ -1,5 +1,5 @@
 {
-  "schema": 2,
+  "schema": 3,
   "id": "level-0",
   "title": "Level 0: The Lobby",
   "dead_end": false,
@@ -9,13 +9,13 @@
   },
   "generate": {
     "regions": [
-      8,
-      14
+      14,
+      22
     ],
-    "tiles": 480,
+    "tiles": 900,
     "genMs": 1500,
-    "loops": 3,
-    "deadEnds": 2,
+    "loops": 4,
+    "deadEnds": 3,
     "maxLevels": 2,
     "connectorForms": [
       {
@@ -26,7 +26,17 @@
         "kind": "shaft",
         "weight": 30
       }
-    ]
+    ],
+    "corridors": {
+      "minShare": 0.2,
+      "maxShare": 0.3
+    },
+    "loopPreference": {
+      "corridor_corridor": 3,
+      "corridor_hall": 2,
+      "vertical": 2,
+      "room_room": 1
+    }
   },
   "tileset": "lobby",
   "transitions": [

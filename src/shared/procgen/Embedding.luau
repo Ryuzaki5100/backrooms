@@ -1,28 +1,30 @@
 --!strict
 
--- Spatial embedding: turn abstract topology into 3D coordinates.
+-- Spatial embedding, pack-first (ADR 0015).
 --
--- Pure Luau (Lune-testable). ADR 0012:
---   * port sides are LOCAL; each node gets a yaw (`rotation`) so its port can
---     face the neighbour it connects to;
---   * floors are `level * floorHeight`, with floorHeight derived per plan so a
---     level's ceiling height is part of its identity;
---   * a plenum (ceiling void) is reserved above every node, because Level 0's
---     lore depends on it;
---   * placement is deterministic: same plan in, same coordinates out.
+-- Order is inverted from the old design: instead of authoring a graph and trying
+-- to fit it into space, we
+--
+--   1. pack the spaces into a footprint (shelf packing, no graph constraints),
+--   2. derive which spaces actually touch,
+--   3. build the door graph from that adjacency (spanning tree + loops),
+--   4. stack upper floors above their hosts and link them vertically.
+--
+-- Contact is therefore true by construction: a door is only ever cut on a shared
+-- face. "No overlaps" and "connected" are both properties of the packer, not
+-- something repaired afterwards.
+--
+-- Pure Luau: no Roblox APIs.
 
 local Embedding = {}
 
 local SLAB = 2
 local PLENUM = 4
 local MIN_FLOOR = 16
-local MAX_FLOOR = 32
-local MAX_ATTEMPTS = 8
-
--- N, E, S, W in clockwise order. U/D are vertical and not part of the cycle.
-local SIDES = { "N", "E", "S", "W" }
-local INDEX = { N = 1, E = 2, S = 3, W = 4 }
-local OPPOSITE = { N = "S", E = "W", S = "N", W = "E" }
+local MAX_FLOOR = 48
+local EPSILON = 0.5
+local MIN_OPENING = 6
+local ASPECT = 1.6
 
 local function round4(value: number): number
 	return math.floor((value + 3) / 4) * 4
@@ -32,48 +34,14 @@ local function clamp(value: number, low: number, high: number): number
 	return math.max(low, math.min(high, value))
 end
 
--- Effective world side of a local side after a yaw of `rotation` quarter turns.
-local function effectiveSide(side: string, rotation: number): string
-	local start = INDEX[side]
-	if start == nil then
-		return side -- vertical: U/D are rotation-invariant
+local function overlaps(a: any, b: any): boolean
+	local yOverlap = a.y < b.y + b.h and b.y < a.y + a.h
+	if not yOverlap then
+		return false
 	end
-	return SIDES[((start - 1 + rotation) % 4) + 1]
-end
-
--- Yaw needed so that a node's local `side` faces `wanted` in the world.
-local function rotationFor(side: string, wanted: string): number
-	local localIndex = INDEX[side]
-	local wantedIndex = INDEX[wanted]
-	if localIndex == nil or wantedIndex == nil then
-		return 0
-	end
-	return (wantedIndex - localIndex + 4) % 4
-end
-
-local function worldExtents(node: any): (number, number)
-	if node.rotation % 2 == 0 then
-		return node.w, node.d
-	end
-	return node.d, node.w
-end
-
-local function overlaps(placed: { any }, candidate: any): boolean
-	local cw, cd = worldExtents(candidate)
-	local cMinY = candidate.y
-	local cMaxY = candidate.y + candidate.h
-	for _, other in ipairs(placed) do
-		local ow, od = worldExtents(other)
-		local yOverlap = cMinY < other.y + other.h and other.y < cMaxY
-		if yOverlap then
-			local xOverlap = candidate.x < other.x + ow and other.x < candidate.x + cw
-			local zOverlap = candidate.z < other.z + od and other.z < candidate.z + cd
-			if xOverlap and zOverlap then
-				return true
-			end
-		end
-	end
-	return false
+	local xOverlap = a.x < b.x + b.w and b.x < a.x + a.w
+	local zOverlap = a.z < b.z + b.d and b.z < a.z + a.d
+	return xOverlap and zOverlap
 end
 
 local function computeFloorHeight(nodes: { any }): number
@@ -84,231 +52,457 @@ local function computeFloorHeight(nodes: { any }): number
 	return clamp(round4(tallest + SLAB + PLENUM), MIN_FLOOR, MAX_FLOOR)
 end
 
--- Candidate positions for `node` attached to `parent` across `edge`.
--- Deterministic order: gap first, then perpendicular shifts.
-local function candidates(
-	parent: any,
-	node: any,
-	side: string,
-	gap: number
-): { { x: number, y: number, z: number } }
-	local pw, pd = worldExtents(parent)
-	local nw, nd = worldExtents(node)
-	local list = {}
-
-	local baseX = parent.x + (pw - nw) / 2
-	local baseZ = parent.z + (pd - nd) / 2
-
-	if side == "E" then
-		baseX = parent.x + pw + gap
-	elseif side == "W" then
-		baseX = parent.x - nw - gap
-	elseif side == "S" then
-		baseZ = parent.z + pd + gap
-	elseif side == "N" then
-		baseZ = parent.z - nd - gap
+-- Do two boxes touch on a vertical face, with enough overlap for a doorway?
+local function touch(a: any, b: any): (string?, string?)
+	if a.level ~= b.level then
+		return nil, nil
 	end
-
-	-- Perpendicular freedom, stepped by the node's own extent so a shift always
-	-- clears the space it was occupying. Fixed order keeps runs reproducible.
-	local step = if side == "E" or side == "W" then nd + gap + 4 else nw + gap + 4
-	local multipliers = { 0, 1, -1, 2, -2, 3, -3 }
-	for _, multiplier in ipairs(multipliers) do
-		local shift = multiplier * step
-		if side == "E" or side == "W" then
-			table.insert(
-				list,
-				{ x = math.floor(baseX + 0.5), y = parent.y, z = math.floor(baseZ + shift + 0.5) }
-			)
-		else
-			table.insert(
-				list,
-				{ x = math.floor(baseX + shift + 0.5), y = parent.y, z = math.floor(baseZ + 0.5) }
-			)
-		end
+	local overlapZ = math.min(a.z + a.d, b.z + b.d) - math.max(a.z, b.z)
+	local overlapX = math.min(a.x + a.w, b.x + b.w) - math.max(a.x, b.x)
+	if math.abs(a.x + a.w - b.x) < EPSILON and overlapZ >= MIN_OPENING then
+		return "E", "W"
+	elseif math.abs(b.x + b.w - a.x) < EPSILON and overlapZ >= MIN_OPENING then
+		return "W", "E"
+	elseif math.abs(a.z + a.d - b.z) < EPSILON and overlapX >= MIN_OPENING then
+		return "S", "N"
+	elseif math.abs(b.z + b.d - a.z) < EPSILON and overlapX >= MIN_OPENING then
+		return "N", "S"
 	end
-
-	return list
+	return nil, nil
 end
 
-local function placeOnce(plan: any, floorHeight: number, gap: number): (any?, string?)
-	local nodesById: { [number]: any } = {}
-	local placed: { any } = {}
-	local order: { any } = {}
+-- ------------------------------------------------------------------ packing
 
-	for _, node in ipairs(plan.nodes) do
-		local copy = table.clone(node)
-		copy.rotation = node.rotation or 0
-		copy.y = node.level * floorHeight
-		nodesById[node.id] = copy
-	end
+local function packLevel(nodes: { any }, factor: number): ()
+	local sorted = table.clone(nodes)
+	table.sort(sorted, function(a: any, b: any)
+		if a.d ~= b.d then
+			return a.d > b.d
+		end
+		return a.id < b.id
+	end)
 
-	local spawn = nodesById[plan.spawn.nodeId]
-	if spawn == nil then
-		return nil, "spawn node missing"
+	local area = 0
+	for _, node in ipairs(sorted) do
+		area += node.w * node.d
 	end
-	spawn.x = 0
-	spawn.z = 0
-	table.insert(placed, spawn)
-	table.insert(order, spawn)
-	local placedIds: { [number]: boolean } = { [spawn.id] = true }
+	local targetWidth = math.max(40, math.ceil(math.sqrt(area * ASPECT) * factor))
 
-	-- Adjacency for a deterministic BFS.
-	local adjacency: { [number]: { any } } = {}
-	for _, node in ipairs(plan.nodes) do
-		adjacency[node.id] = {}
+	local x, z, rowDepth = 0, 0, 0
+	for _, node in ipairs(sorted) do
+		if x > 0 and x + node.w > targetWidth then
+			z += rowDepth
+			x = 0
+			rowDepth = 0
+		end
+		node.x = x
+		node.z = z
+		x += node.w
+		rowDepth = math.max(rowDepth, node.d)
 	end
-	for _, edge in ipairs(plan.edges) do
-		if adjacency[edge.a] and adjacency[edge.b] then
-			table.insert(
-				adjacency[edge.a],
-				{ edge = edge, selfPort = edge.aPort, otherPort = edge.bPort }
-			)
-			table.insert(
-				adjacency[edge.b],
-				{ edge = edge, selfPort = edge.bPort, otherPort = edge.aPort }
-			)
+end
+
+local function deriveAdjacency(nodes: { any }): { any }
+	local edges = {}
+	for i = 1, #nodes do
+		for j = i + 1, #nodes do
+			local a = nodes[i]
+			local b = nodes[j]
+			local sideA, sideB = touch(a, b)
+			if sideA ~= nil and sideB ~= nil then
+				table.insert(edges, {
+					a = a,
+					b = b,
+					sideA = sideA,
+					sideB = sideB,
+					key = if a.id < b.id then a.id .. ":" .. b.id else b.id .. ":" .. a.id,
+				})
+			end
 		end
 	end
+	return edges
+end
 
+local function bbox(nodes: { any }): (number, number, number, number)
+	local minX, minZ = math.huge, math.huge
+	local maxX, maxZ = -math.huge, -math.huge
+	for _, node in ipairs(nodes) do
+		minX = math.min(minX, node.x)
+		minZ = math.min(minZ, node.z)
+		maxX = math.max(maxX, node.x + node.w)
+		maxZ = math.max(maxZ, node.z + node.d)
+	end
+	return minX, minZ, maxX, maxZ
+end
+
+-- Translate whole components until the pack is one connected mass. Moving a
+-- component preserves its internal adjacency, so this can only add connections.
+local function repairComponents(nodes: { any }, edges: { any }): number
+	for _ = 1, #nodes do
+		local parent: { [number]: number } = {}
+		for _, node in ipairs(nodes) do
+			parent[node.id] = node.id
+		end
+		local function find(id: number): number
+			while parent[id] ~= id do
+				parent[id] = parent[parent[id]]
+				id = parent[id]
+			end
+			return id
+		end
+		for _, edge in ipairs(edges) do
+			local ra, rb = find(edge.a.id), find(edge.b.id)
+			if ra ~= rb then
+				parent[ra] = rb
+			end
+		end
+
+		local components: { [number]: { any } } = {}
+		for _, node in ipairs(nodes) do
+			local root = find(node.id)
+			components[root] = components[root] or {}
+			table.insert(components[root], node)
+		end
+
+		local roots = {}
+		for root in pairs(components) do
+			table.insert(roots, root)
+		end
+		if #roots <= 1 then
+			return #roots
+		end
+		table.sort(roots)
+
+		-- Keep the largest component as the anchor, move the rest against it.
+		table.sort(roots, function(a, b)
+			return #components[a] > #components[b]
+		end)
+		local anchor = components[roots[1]]
+		local anchorMaxX, anchorMinZ = select(3, bbox(anchor)), select(2, bbox(anchor))
+		for index = 2, #roots do
+			local moving = components[roots[index]]
+			local moveMinX, moveMinZ = bbox(moving)
+			local dx = anchorMaxX - moveMinX
+			local dz = anchorMinZ - moveMinZ
+			for _, node in ipairs(moving) do
+				node.x += dx
+				node.z += dz
+			end
+			local _, _, newMaxX = bbox(moving)
+			anchorMaxX = math.max(anchorMaxX, newMaxX)
+		end
+		edges = deriveAdjacency(nodes)
+	end
+	return 999
+end
+
+-- --------------------------------------------------------------- door graph
+
+local function loopWeight(a: any, b: any, preference: any): number
+	local function pair(x: string, y: string): boolean
+		return (a.kind == x and b.kind == y) or (a.kind == y and b.kind == x)
+	end
+	if pair("corridor", "corridor") then
+		return preference.corridor_corridor or 3
+	elseif pair("corridor", "hall") then
+		return preference.corridor_hall or 2
+	elseif pair("room", "room") then
+		return preference.room_room or 1
+	end
+	return 1
+end
+
+local function addPort(node: any, side: string, height: number): number
+	local id = #node.ports + 1
+	table.insert(node.ports, {
+		id = id,
+		side = side,
+		offset = 0,
+		width = 4,
+		height = math.min(height, node.h),
+		elevation = 0,
+		kind = "door",
+		guard = "auto",
+	})
+	return id
+end
+
+local function buildDoors(plan: any, nodes: { any }, adjacency: { any }, options: any): ()
+	local byId: { [number]: any } = {}
+	for _, node in ipairs(nodes) do
+		byId[node.id] = node
+	end
+
+	-- BFS over the adjacency graph from the spawn.
+	local linked: { [number]: { any } } = {}
+	for _, node in ipairs(nodes) do
+		linked[node.id] = {}
+	end
+	for _, edge in ipairs(adjacency) do
+		table.insert(linked[edge.a.id], edge)
+		table.insert(linked[edge.b.id], edge)
+	end
+
+	local visited: { [number]: boolean } = { [plan.spawn.nodeId] = true }
+	local queue = { plan.spawn.nodeId }
 	local head = 1
-	while head <= #order do
-		local parent = order[head]
+	local used: { [string]: boolean } = {}
+	local edgeId = 0
+
+	while head <= #queue do
+		local current = queue[head]
 		head += 1
-
-		for _, link in ipairs(adjacency[parent.id]) do
-			local edge = link.edge
-			local otherId = if edge.a == parent.id then edge.b else edge.a
-			local child = nodesById[otherId]
-			if child ~= nil and not placedIds[child.id] then
-				local parentPort = parent.ports[link.selfPort]
-				local childPort = child.ports[link.otherPort]
-				if parentPort == nil or childPort == nil then
-					return nil, "edge " .. tostring(edge.id) .. " references a missing port"
-				end
-
-				local parentSide = effectiveSide(parentPort.side, parent.rotation)
-				if parentSide == "U" or parentSide == "D" then
-					-- Vertical link: prefer the footprint above the parent, but the
-					-- upper floor may already be occupied, so search around it.
-					local nw, nd = worldExtents(child)
-					local pw, pd = worldExtents(parent)
-					local baseX = math.floor(parent.x + (pw - nw) / 2 + 0.5)
-					local baseZ = math.floor(parent.z + (pd - nd) / 2 + 0.5)
-					-- Steps scale with the child's footprint, otherwise a 24-stud room
-					-- "shifts by 4" straight back into itself.
-					local step = math.max(nw, nd) + 4
-					local offsets = { 0, step, -step, 2 * step, -2 * step, 3 * step, -3 * step }
-					local chosen = nil
-					for _, dx in ipairs(offsets) do
-						for _, dz in ipairs(offsets) do
-							local trial = table.clone(child)
-							trial.x = baseX + dx
-							trial.z = baseZ + dz
-							trial.y = child.level * floorHeight
-							if not overlaps(placed, trial) then
-								chosen = trial
-								break
-							end
-						end
-						if chosen ~= nil then
-							break
-						end
-					end
-					if chosen == nil then
-						return nil, "no vertical position for node " .. tostring(child.id)
-					end
-					child.x = chosen.x
-					child.y = chosen.y
-					child.z = chosen.z
-					table.insert(placed, child)
-					table.insert(order, child)
-					placedIds[child.id] = true
-				else
-					child.rotation = rotationFor(childPort.side, OPPOSITE[parentSide])
-					local options = candidates(parent, child, parentSide, gap)
-					local chosen = nil
-					for _, option in ipairs(options) do
-						local trial = table.clone(child)
-						trial.x = option.x
-						trial.z = option.z
-						trial.y = child.level * floorHeight
-						if not overlaps(placed, trial) then
-							chosen = trial
-							break
-						end
-					end
-					if chosen == nil then
-						return nil, "no free position for node " .. tostring(child.id)
-					end
-					child.x = chosen.x
-					child.y = chosen.y
-					child.z = chosen.z
-					table.insert(placed, child)
-					table.insert(order, child)
-					placedIds[child.id] = true
+		for _, edge in ipairs(linked[current]) do
+			if not used[edge.key] then
+				local other = if edge.a.id == current then edge.b else edge.a
+				if not visited[other.id] then
+					visited[other.id] = true
+					table.insert(queue, other.id)
+					used[edge.key] = true
+					edgeId += 1
+					local aPort = addPort(edge.a, edge.sideA, 8)
+					local bPort = addPort(edge.b, edge.sideB, 8)
+					table.insert(plan.edges, {
+						id = edgeId,
+						a = edge.a.id,
+						b = edge.b.id,
+						aPort = aPort,
+						bPort = bPort,
+						kind = "passage",
+					})
 				end
 			end
 		end
 	end
 
-	if #order ~= #plan.nodes then
-		return nil, "graph is not connected from spawn"
+	-- Loops: adjacent pairs that are not already doorways.
+	local candidates = table.clone(adjacency)
+	table.sort(candidates, function(x: any, y: any)
+		local wx = loopWeight(x.a, x.b, options.loopPreference or {})
+		local wy = loopWeight(y.a, y.b, options.loopPreference or {})
+		if wx ~= wy then
+			return wx > wy
+		end
+		return x.key < y.key
+	end)
+	local loops = options.loops or 0
+	for _, edge in ipairs(candidates) do
+		if loops <= 0 then
+			break
+		end
+		if not used[edge.key] then
+			used[edge.key] = true
+			loops -= 1
+			edgeId += 1
+			local aPort = addPort(edge.a, edge.sideA, 8)
+			local bPort = addPort(edge.b, edge.sideB, 8)
+			table.insert(plan.edges, {
+				id = edgeId,
+				a = edge.a.id,
+				b = edge.b.id,
+				aPort = aPort,
+				bPort = bPort,
+				kind = "loop",
+			})
+		end
+	end
+end
+
+-- -------------------------------------------------------------------- entry
+
+function Embedding.embed(plan: any, options: any?): any
+	local opts = options or {}
+	local floorHeight = computeFloorHeight(plan.nodes)
+
+	local nodesById: { [number]: any } = {}
+	for _, node in ipairs(plan.nodes) do
+		local copy = table.clone(node)
+		copy.rotation = 0
+		copy.ports = {}
+		copy.y = copy.level * floorHeight
+		nodesById[copy.id] = copy
 	end
 
-	-- Preserve the original node order (by id) in the output.
-	local outNodes = {}
+	local ground: { any } = {}
+	local upper: { any } = {}
 	for _, node in ipairs(plan.nodes) do
-		table.insert(outNodes, nodesById[node.id])
+		local copy = nodesById[node.id]
+		if copy.level == 0 then
+			table.insert(ground, copy)
+		else
+			table.insert(upper, copy)
+		end
+	end
+
+	if #ground == 0 then
+		error("Embedding.embed: no ground-level nodes", 2)
+	end
+
+	-- Packing density is a knob: tighter packs create more shared walls, which
+	-- is where loops come from. Try progressively denser layouts until there are
+	-- enough spare adjacency pairs for the requested loops.
+	local wantedLoops = opts.loops or 0
+	local adjacency = {}
+	local factors = { 1.0, 0.85, 0.7, 0.55 }
+	for _, factor in ipairs(factors) do
+		packLevel(ground, factor)
+		repairComponents(ground, adjacency)
+		adjacency = deriveAdjacency(ground)
+		if #adjacency - (#ground - 1) >= wantedLoops or factor == factors[#factors] then
+			break
+		end
+	end
+
+	-- Upper floors stack above distinct ground nodes with the same footprint, so
+	-- they cannot overlap each other and their shaft is exactly vertical.
+	local hosts = table.clone(ground)
+	table.sort(hosts, function(a: any, b: any)
+		return a.id < b.id
+	end)
+	table.sort(upper, function(a: any, b: any)
+		return a.id < b.id
+	end)
+	for index, node in ipairs(upper) do
+		local host = hosts[((index - 1) % #hosts) + 1]
+		node.w = host.w
+		node.d = host.d
+		node.x = host.x
+		node.z = host.z
+		node.y = node.level * floorHeight
+		node.tags = node.tags or {}
+		table.insert(node.tags, "stacked:" .. tostring(host.id))
 	end
 
 	local out = table.clone(plan)
-	out.nodes = outNodes
+	out.nodes = {}
+	for _, node in ipairs(plan.nodes) do
+		table.insert(out.nodes, nodesById[node.id])
+	end
+	out.edges = {}
 	out.floorHeight = floorHeight
 	out.plenum = PLENUM
+
+	buildDoors(out, ground, adjacency, opts)
+
+	-- Vertical links: one per upper node, with U on the host and D on the upper.
+	local edgeId = #out.edges
+	for index, node in ipairs(upper) do
+		local host = hosts[((index - 1) % #hosts) + 1]
+		local hostNode = nodesById[host.id]
+		local upPort = addPort(hostNode, "U", 8)
+		local downPort = addPort(node, "D", 8)
+		edgeId += 1
+		table.insert(out.edges, {
+			id = edgeId,
+			a = hostNode.id,
+			b = node.id,
+			aPort = upPort,
+			bPort = downPort,
+			kind = "shaft",
+		})
+	end
+
+	local problems = Embedding.validate(out)
+	if #problems > 0 then
+		error("Embedding.embed: " .. table.concat(problems, "; "), 2)
+	end
 	return out
 end
 
-function Embedding.embed(plan: any): any
-	local floorHeight = computeFloorHeight(plan.nodes)
-	local lastError = "unknown"
+-- -------------------------------------------------------------- validation
 
-	for attempt = 0, MAX_ATTEMPTS - 1 do
-		local gap = attempt * 2
-		local placed, failure = placeOnce(plan, floorHeight, gap)
-		if placed ~= nil then
-			return placed
-		end
-		lastError = tostring(failure)
-	end
-
-	error("Embedding.embed: no placement after " .. MAX_ATTEMPTS .. " attempts: " .. lastError, 2)
-end
-
--- Structural checks. Overlap and coverage now; port agreement and headroom
--- belong to M10 once fills exist.
 function Embedding.validate(plan: any): { string }
 	local problems: { string } = {}
+	local nodesById: { [number]: any } = {}
 	local placed: { any } = {}
 
-	if plan.floorHeight == nil or plan.floorHeight < MIN_FLOOR or plan.floorHeight > MAX_FLOOR then
-		table.insert(problems, "floorHeight out of range")
+	for _, node in ipairs(plan.nodes) do
+		nodesById[node.id] = node
+		if node.y ~= node.level * (plan.floorHeight or 0) then
+			table.insert(problems, "node " .. tostring(node.id) .. " is off its level")
+		end
+		for _, other in ipairs(placed) do
+			if overlaps(node, other) then
+				table.insert(
+					problems,
+					"node " .. tostring(node.id) .. " overlaps node " .. tostring(other.id)
+				)
+				break
+			end
+		end
+		table.insert(placed, node)
 	end
 
+	local adjacency: { [number]: { number } } = {}
 	for _, node in ipairs(plan.nodes) do
-		if node.x == nil or node.z == nil then
-			table.insert(problems, "node " .. tostring(node.id) .. " is unplaced")
+		adjacency[node.id] = {}
+	end
+
+	for _, edge in ipairs(plan.edges) do
+		local a = nodesById[edge.a]
+		local b = nodesById[edge.b]
+		if a == nil or b == nil then
+			table.insert(problems, "edge " .. tostring(edge.id) .. " references a missing node")
 		else
-			if node.y ~= node.level * (plan.floorHeight or 0) then
-				table.insert(problems, "node " .. tostring(node.id) .. " is off its level")
+			table.insert(adjacency[a.id], b.id)
+			table.insert(adjacency[b.id], a.id)
+			if a.level == b.level then
+				local sideA = touch(a, b)
+				if sideA == nil then
+					table.insert(
+						problems,
+						"edge "
+							.. tostring(edge.id)
+							.. " does not touch ("
+							.. tostring(a.id)
+							.. "-"
+							.. tostring(b.id)
+							.. ")"
+					)
+				end
+			else
+				local overlapX = math.min(a.x + a.w, b.x + b.w) - math.max(a.x, b.x)
+				local overlapZ = math.min(a.z + a.d, b.z + b.d) - math.max(a.z, b.z)
+				if
+					math.abs(a.level - b.level) ~= 1
+					or overlapX < MIN_OPENING
+					or overlapZ < MIN_OPENING
+				then
+					table.insert(
+						problems,
+						"edge " .. tostring(edge.id) .. " has no usable vertical overlap"
+					)
+				end
 			end
-			if node.rotation ~= nil and (node.rotation < 0 or node.rotation > 3) then
-				table.insert(problems, "node " .. tostring(node.id) .. " has an invalid rotation")
+		end
+	end
+
+	local spawn = plan.spawn.nodeId
+	local seen: { [number]: boolean } = { [spawn] = true }
+	local queue = { spawn }
+	local head = 1
+	while head <= #queue do
+		local current = queue[head]
+		head += 1
+		for _, neighbour in ipairs(adjacency[current] or {}) do
+			if not seen[neighbour] then
+				seen[neighbour] = true
+				table.insert(queue, neighbour)
 			end
-			if overlaps(placed, node) then
-				table.insert(problems, "node " .. tostring(node.id) .. " overlaps another node")
-			end
-			table.insert(placed, node)
+		end
+	end
+	for _, node in ipairs(plan.nodes) do
+		if not seen[node.id] then
+			table.insert(problems, "node " .. tostring(node.id) .. " is unreachable")
+		end
+	end
+
+	for _, exit in ipairs(plan.exits or {}) do
+		if exit.anchor.hostNode ~= nil and not seen[exit.anchor.hostNode] then
+			table.insert(
+				problems,
+				"exit " .. tostring(exit.id) .. " is anchored to an unreachable node"
+			)
 		end
 	end
 

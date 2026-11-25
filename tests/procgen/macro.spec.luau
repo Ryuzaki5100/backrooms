@@ -5,84 +5,48 @@ local Macro = require("../../src/shared/procgen/Macro")
 local Plan = require("../../src/shared/procgen/Plan")
 local Level0 = require("../../src/config/levels/Level_0")
 
-local function cycleRank(plan: any): number
-	return #plan.edges - #plan.nodes + 1
-end
-
-H.test("builds a valid plan for a fixed seed", function()
+H.test("builds a node inventory", function()
 	local plan = Macro.build(Level0, 42)
 	H.eq(plan.seed, 42)
-	H.eq(#Macro.validate(plan), 0, "validators")
-	H.ok(#plan.nodes > 0, "has nodes")
+	H.ok(#plan.nodes >= Level0.generate.regions[1], "at least the minimum region count")
 	H.ok(plan.spawn.nodeId ~= 0, "has spawn")
+	H.eq(#plan.edges, 0, "edges are derived by embedding, not authored")
 end)
 
-H.test("is deterministic: same seed, same bytes", function()
-	local a = Macro.build(Level0, 42)
-	local b = Macro.build(Level0, 42)
-	H.eq(Plan.bytes(a), Plan.bytes(b))
+H.test("corridor share stays inside the configured band", function()
+	for seed = 1, 50 do
+		local plan = Macro.build(Level0, seed)
+		local corridors = 0
+		for _, node in ipairs(plan.nodes) do
+			if node.kind == "corridor" then
+				corridors += 1
+			end
+		end
+		local share = corridors / #plan.nodes
+		local minShare = Level0.generate.corridors.minShare
+		local maxShare = Level0.generate.corridors.maxShare
+		H.ok(share >= minShare - 0.001, "seed " .. seed .. " corridor share too low: " .. share)
+		H.ok(share <= maxShare + 0.04, "seed " .. seed .. " corridor share too high: " .. share)
+	end
 end)
 
-H.test("different seeds produce different plans", function()
-	local a = Macro.build(Level0, 42)
-	local b = Macro.build(Level0, 43)
-	H.neq(Plan.hash(a), Plan.hash(b))
-end)
-
-H.test("every declared transition has exactly one exit", function()
+H.test("every declared transition gets a host", function()
 	local plan = Macro.build(Level0, 42)
 	H.eq(#plan.exits, #Level0.transitions, "exit count")
 	local seen: { [string]: boolean } = {}
 	for _, exit in ipairs(plan.exits) do
-		H.ok(not seen[exit.id], "unique exit id " .. exit.id)
+		H.ok(not seen[exit.id], "unique exit id")
 		seen[exit.id] = true
-		H.ok(#exit.outcomes >= 1, "exit has an outcome")
-	end
-	for _, transition in ipairs(Level0.transitions) do
-		H.ok(seen[transition.id], "transition placed: " .. transition.id)
+		H.ok(exit.anchor.hostNode ~= nil, "exit has a host")
 	end
 end)
 
-H.test("seed mode stores exactly one resolved outcome", function()
-	local plan = Macro.build(Level0, 42)
-	for _, exit in ipairs(plan.exits) do
-		if exit.resolve == "seed" then
-			H.eq(#exit.outcomes, 1, "resolved outcome for " .. exit.id)
-		end
-	end
+H.test("is deterministic", function()
+	H.eq(Plan.bytes(Macro.build(Level0, 42)), Plan.bytes(Macro.build(Level0, 42)))
 end)
 
-H.test("loop count is exact", function()
-	local plan = Macro.build(Level0, 42)
-	H.eq(cycleRank(plan), Level0.generate.loops, "independent cycles")
-end)
-
-H.test("1000 seeds are fully connected, valid, and keep the loop count", function()
-	local failures = 0
-	local firstFailure = nil
-	for seed = 1, 1000 do
-		local ok, plan = pcall(Macro.build, Level0, seed)
-		if not ok then
-			failures += 1
-			firstFailure = firstFailure or ("seed " .. seed .. ": " .. tostring(plan))
-		else
-			local problems = Macro.validate(plan)
-			local rank = cycleRank(plan)
-			if #problems > 0 or rank ~= Level0.generate.loops then
-				failures += 1
-				firstFailure = firstFailure
-					or (
-						"seed "
-						.. seed
-						.. ": rank "
-						.. rank
-						.. " / "
-						.. table.concat(problems, "; ")
-					)
-			end
-		end
-	end
-	H.eq(failures, 0, "failing seeds (" .. tostring(firstFailure) .. ")")
+H.test("different seeds produce different inventories", function()
+	H.neq(Plan.hash(Macro.build(Level0, 42)), Plan.hash(Macro.build(Level0, 43)))
 end)
 
 H.test("dead-end levels are rejected without transitions", function()

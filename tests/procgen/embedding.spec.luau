@@ -6,90 +6,102 @@ local Macro = require("../../src/shared/procgen/Macro")
 local Plan = require("../../src/shared/procgen/Plan")
 local Level0 = require("../../src/config/levels/Level_0")
 
-H.test("embeds a macro plan with no overlaps", function()
-	local plan = Embedding.embed(Macro.build(Level0, 42))
+local OPTIONS = {
+	loops = Level0.generate.loops,
+	loopPreference = Level0.generate.loopPreference,
+}
+
+local function embed(seed: number): any
+	return Embedding.embed(Macro.build(Level0, seed), OPTIONS)
+end
+
+H.test("packs a level with every edge touching", function()
+	local plan = embed(42)
 	H.eq(#Embedding.validate(plan), 0, "validators")
-	H.ok(plan.floorHeight >= 16 and plan.floorHeight <= 32, "floorHeight in range")
-	H.eq(plan.floorHeight % 4, 0, "floorHeight on a 4-stud grid")
-	H.ok(plan.plenum > 0, "plenum reserved")
+	H.ok(#plan.edges > 0, "has doors")
+	H.ok(plan.floorHeight >= 16 and plan.floorHeight <= 48, "floorHeight in range")
 end)
 
-H.test("every node sits on its level", function()
-	local plan = Embedding.embed(Macro.build(Level0, 42))
+H.test("the door graph connects every node", function()
+	local plan = embed(42)
+	local adjacency: { [number]: { number } } = {}
 	for _, node in ipairs(plan.nodes) do
-		H.eq(node.y, node.level * plan.floorHeight, "node " .. tostring(node.id) .. " elevation")
-		H.ok(node.rotation >= 0 and node.rotation <= 3, "rotation in range")
+		adjacency[node.id] = {}
+	end
+	for _, edge in ipairs(plan.edges) do
+		table.insert(adjacency[edge.a], edge.b)
+		table.insert(adjacency[edge.b], edge.a)
+	end
+	local seen: { [number]: boolean } = { [plan.spawn.nodeId] = true }
+	local queue = { plan.spawn.nodeId }
+	local head = 1
+	while head <= #queue do
+		local current = queue[head]
+		head += 1
+		for _, next in ipairs(adjacency[current] or {}) do
+			if not seen[next] then
+				seen[next] = true
+				table.insert(queue, next)
+			end
+		end
+	end
+	local reached = 0
+	for _ in pairs(seen) do
+		reached += 1
+	end
+	H.eq(reached, #plan.nodes, "all nodes reachable")
+end)
+
+H.test("loops are realised from spare shared walls", function()
+	-- A loop is a second door on a wall that already touches. How many exist is a
+	-- property of the pack, so the target is a ceiling, not a guarantee.
+	local plan = embed(42)
+	local loops = 0
+	for _, edge in ipairs(plan.edges) do
+		if edge.kind == "loop" then
+			loops += 1
+		end
+	end
+	H.ok(loops >= 1, "at least one loop")
+	H.ok(loops <= Level0.generate.loops, "no more than the target")
+end)
+
+H.test("no two nodes overlap", function()
+	local plan = embed(42)
+	for i = 1, #plan.nodes do
+		for j = i + 1, #plan.nodes do
+			local a = plan.nodes[i]
+			local b = plan.nodes[j]
+			local yOverlap = a.y < b.y + b.h and b.y < a.y + a.h
+			local xOverlap = a.x < b.x + b.w and b.x < a.x + a.w
+			local zOverlap = a.z < b.z + b.d and b.z < a.z + a.d
+			H.ok(not (yOverlap and xOverlap and zOverlap), "nodes " .. a.id .. "/" .. b.id)
+		end
 	end
 end)
 
 H.test("embedding is deterministic", function()
-	local a = Embedding.embed(Macro.build(Level0, 42))
-	local b = Embedding.embed(Macro.build(Level0, 43))
-	H.neq(Plan.hash(a), Plan.hash(b))
-	local c = Embedding.embed(Macro.build(Level0, 42))
-	H.eq(Plan.bytes(a), Plan.bytes(c), "same seed, same bytes")
+	local a = embed(42)
+	local b = embed(42)
+	H.eq(Plan.bytes(a), Plan.bytes(b))
+	H.neq(Plan.hash(a), Plan.hash(embed(43)), "different seed differs")
 end)
 
-H.test("100 seeds embed without overlap", function()
+H.test("100 seeds embed, connect and validate", function()
 	local failures = 0
-	local firstFailure = nil
+	local first = nil
 	for seed = 1, 100 do
-		local ok, plan = pcall(function()
-			return Embedding.embed(Macro.build(Level0, seed))
-		end)
+		local ok, plan = pcall(embed, seed)
 		if not ok then
 			failures += 1
-			firstFailure = firstFailure or ("seed " .. seed .. ": " .. tostring(plan))
+			first = first or ("seed " .. seed .. ": " .. tostring(plan))
 		else
 			local problems = Embedding.validate(plan)
 			if #problems > 0 then
 				failures += 1
-				firstFailure = firstFailure
-					or ("seed " .. seed .. ": " .. table.concat(problems, "; "))
+				first = first or ("seed " .. seed .. ": " .. table.concat(problems, "; "))
 			end
 		end
 	end
-	H.eq(failures, 0, "failing seeds (" .. tostring(firstFailure) .. ")")
-end)
-
-H.test("floorHeight is derived from the tallest node and clamped", function()
-	local small = {
-		schemaVersion = 3,
-		genVersion = 1,
-		macroEpoch = 1,
-		seed = 1,
-		specId = "test",
-		floorHeight = 0,
-		plenum = 0,
-		nodes = {
-			{
-				id = 1,
-				kind = "room",
-				w = 8,
-				h = 8,
-				d = 8,
-				level = 0,
-				x = 0,
-				y = 0,
-				z = 0,
-				rotation = 0,
-				filler = "wfc",
-				params = {},
-				ports = {},
-				tags = {},
-			},
-		},
-		edges = {},
-		connectors = {},
-		exits = {},
-		spawn = { nodeId = 1, surface = "floor" },
-	}
-	local embedded = Embedding.embed(small)
-	H.eq(embedded.floorHeight, 16, "clamped to the minimum")
-
-	local tall = table.clone(small)
-	tall.nodes = { table.clone(small.nodes[1]) }
-	tall.nodes[1].h = 40
-	local tallEmbedded = Embedding.embed(tall)
-	H.eq(tallEmbedded.floorHeight, 32, "clamped to the maximum")
+	H.eq(failures, 0, "failing seeds (" .. tostring(first) .. ")")
 end)

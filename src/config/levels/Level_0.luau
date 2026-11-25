@@ -16,15 +16,25 @@ return {
 				["weight"] = 30,
 			},
 		},
-		["deadEnds"] = 2,
+		["corridors"] = {
+			["maxShare"] = 0.3,
+			["minShare"] = 0.2,
+		},
+		["deadEnds"] = 3,
 		["genMs"] = 1500,
-		["loops"] = 3,
+		["loopPreference"] = {
+			["corridor_corridor"] = 3,
+			["corridor_hall"] = 2,
+			["room_room"] = 1,
+			["vertical"] = 2,
+		},
+		["loops"] = 4,
 		["maxLevels"] = 2,
 		["regions"] = {
-			8,
 			14,
+			22,
 		},
-		["tiles"] = 480,
+		["tiles"] = 900,
 	},
 	["hazards"] = {
 		{
@@ -60,7 +70,7 @@ return {
 			["weight"] = 1,
 		},
 	},
-	["schema"] = 2,
+	["schema"] = 3,
 	["source"] = {
 		["note"] = "60-lore/levels/level-0.md",
 		["revid"] = 1397338,

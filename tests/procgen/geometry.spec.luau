@@ -6,8 +6,13 @@ local Geometry = require("../../src/shared/procgen/Geometry")
 local Macro = require("../../src/shared/procgen/Macro")
 local Level0 = require("../../src/config/levels/Level_0")
 
+local OPTIONS = {
+	loops = Level0.generate.loops,
+	loopPreference = Level0.generate.loopPreference,
+}
+
 local function build(seed: number, options: any?): ({ any }, any)
-	local plan = Embedding.embed(Macro.build(Level0, seed))
+	local plan = Embedding.embed(Macro.build(Level0, seed), OPTIONS)
 	return Geometry.describe(plan, options), plan
 end
 
