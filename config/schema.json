@@ -19,7 +19,7 @@
     "schema": {
       "type": "integer",
       "enum": [
-        6
+        7
       ]
     },
     "id": {
@@ -959,6 +959,219 @@
             "type": "number",
             "minimum": -360,
             "maximum": 360
+          }
+        }
+      }
+    },
+    "strategy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "enum": [
+            "rooms_and_corridors",
+            "open_additive"
+          ]
+        },
+        "params": {
+          "type": "object"
+        }
+      }
+    },
+    "world": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sizeTier": {
+          "enum": [
+            "tiny",
+            "small",
+            "medium",
+            "large",
+            "vast",
+            "endless"
+          ]
+        },
+        "worldSizeChunks": {
+          "type": "integer",
+          "minimum": 3,
+          "maximum": 100000
+        },
+        "boundaryMode": {
+          "enum": [
+            "wrap",
+            "wall",
+            "infinite"
+          ]
+        },
+        "walkSpeed": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "chunkCells": {
+          "type": "integer",
+          "minimum": 3,
+          "maximum": 128
+        },
+        "generationRadius": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "unloadRadius": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "maxChunksPerFrame": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "maxChunksPerSecond": {
+          "type": "number",
+          "minimum": 0.1
+        },
+        "maxLoadedChunksPerPlayer": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "wrapMarginChunks": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 8
+        }
+      }
+    },
+    "visibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "occluders": {
+          "type": "boolean"
+        },
+        "fog": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "end": {
+              "type": "number",
+              "minimum": 1
+            }
+          }
+        },
+        "farPlane": {
+          "type": "number",
+          "minimum": 1
+        },
+        "backdrop": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "horizon",
+            null
+          ]
+        }
+      }
+    },
+    "render": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "parts": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "ceiling": {
+          "enum": [
+            "slab",
+            "none"
+          ]
+        },
+        "maxLoadedParts": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "details": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "chance": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "where": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "any_open",
+                "open_hall",
+                "near_wall",
+                "dead_end"
+              ]
+            }
+          },
+          "minSpacing": {
+            "type": "number",
+            "minimum": 0
+          },
+          "densityCap": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "perChunk": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "footprint": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "w": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "d": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          "prefab": {
+            "type": "string"
+          },
+          "regions": {
+            "type": "array"
+          },
+          "hallMinCells": {
+            "type": "integer",
+            "minimum": 1
           }
         }
       }

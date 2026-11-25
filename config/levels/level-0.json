@@ -1,5 +1,5 @@
 {
-  "schema": 6,
+  "schema": 7,
   "id": "level-0",
   "title": "Level 0: The Lobby",
   "dead_end": false,
@@ -204,5 +204,81 @@
     "fogEnd": 80,
     "bloom": 0.2,
     "ambient": "#3a3620"
-  }
+  },
+  "strategy": {
+    "name": "open_additive",
+    "params": {
+      "cell": 16,
+      "chunkCells": 18,
+      "block": 6,
+      "pillarShare": 0.25,
+      "pillarSize": 2,
+      "runCount": [
+        2,
+        5
+      ],
+      "runLength": [
+        2,
+        6
+      ],
+      "hallShare": 0.22,
+      "hallBlocks": 2,
+      "heights": [
+        10,
+        12,
+        14
+      ]
+    }
+  },
+  "world": {
+    "sizeTier": "vast",
+    "boundaryMode": "wrap",
+    "walkSpeed": 16,
+    "generationRadius": 2,
+    "unloadRadius": 3,
+    "maxChunksPerFrame": 2,
+    "maxChunksPerSecond": 8,
+    "maxLoadedChunksPerPlayer": 25,
+    "wrapMarginChunks": 1
+  },
+  "visibility": {
+    "occluders": true,
+    "fog": null,
+    "farPlane": 5000,
+    "backdrop": null
+  },
+  "render": {
+    "budget": {
+      "parts": 8000
+    },
+    "ceiling": "slab",
+    "maxLoadedParts": 8000
+  },
+  "details": [
+    {
+      "id": "ceiling_light",
+      "chance": 0.05,
+      "where": [
+        "open_hall"
+      ],
+      "minSpacing": 40,
+      "densityCap": {
+        "perChunk": 8
+      },
+      "hallMinCells": 30,
+      "prefab": "ceiling_light"
+    },
+    {
+      "id": "wall_stain",
+      "chance": 0.1,
+      "where": [
+        "near_wall"
+      ],
+      "minSpacing": 24,
+      "densityCap": {
+        "perChunk": 10
+      },
+      "prefab": "wall_stain"
+    }
+  ]
 }

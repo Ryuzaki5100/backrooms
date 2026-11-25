@@ -4,6 +4,33 @@
 -- Do not edit by hand: edit the JSON and run `lune run scripts/gen-config.luau`.
 return {
 	["dead_end"] = false,
+	["details"] = {
+		{
+			["chance"] = 0.05,
+			["densityCap"] = {
+				["perChunk"] = 8,
+			},
+			["hallMinCells"] = 30,
+			["id"] = "ceiling_light",
+			["minSpacing"] = 40,
+			["prefab"] = "ceiling_light",
+			["where"] = {
+				"open_hall",
+			},
+		},
+		{
+			["chance"] = 0.1,
+			["densityCap"] = {
+				["perChunk"] = 10,
+			},
+			["id"] = "wall_stain",
+			["minSpacing"] = 24,
+			["prefab"] = "wall_stain",
+			["where"] = {
+				"near_wall",
+			},
+		},
+	},
 	["entities"] = {},
 	["generate"] = {
 		["anchors"] = {
@@ -150,10 +177,42 @@ return {
 			["weight"] = 1,
 		},
 	},
-	["schema"] = 6,
+	["render"] = {
+		["budget"] = {
+			["parts"] = 8000,
+		},
+		["ceiling"] = "slab",
+		["maxLoadedParts"] = 8000,
+	},
+	["schema"] = 7,
 	["source"] = {
 		["note"] = "60-lore/levels/level-0.md",
 		["revid"] = 1397338,
+	},
+	["strategy"] = {
+		["name"] = "open_additive",
+		["params"] = {
+			["block"] = 6,
+			["cell"] = 16,
+			["chunkCells"] = 18,
+			["hallBlocks"] = 2,
+			["hallShare"] = 0.22,
+			["heights"] = {
+				10,
+				12,
+				14,
+			},
+			["pillarShare"] = 0.25,
+			["pillarSize"] = 2,
+			["runCount"] = {
+				2,
+				5,
+			},
+			["runLength"] = {
+				2,
+				6,
+			},
+		},
 	},
 	["style"] = {
 		["budget"] = {
@@ -208,5 +267,20 @@ return {
 			},
 			["resolve"] = "seed",
 		},
+	},
+	["visibility"] = {
+		["farPlane"] = 5000,
+		["occluders"] = true,
+	},
+	["world"] = {
+		["boundaryMode"] = "wrap",
+		["generationRadius"] = 2,
+		["maxChunksPerFrame"] = 2,
+		["maxChunksPerSecond"] = 8,
+		["maxLoadedChunksPerPlayer"] = 25,
+		["sizeTier"] = "vast",
+		["unloadRadius"] = 3,
+		["walkSpeed"] = 16,
+		["wrapMarginChunks"] = 1,
 	},
 }

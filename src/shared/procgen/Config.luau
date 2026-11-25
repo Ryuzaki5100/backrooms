@@ -74,6 +74,36 @@ function Config.fingerprint(config: any): string
 		tostring(connectivity.sealedShare or 0),
 	}, ":")
 
+	local function canonical(value: any): string
+		if type(value) ~= "table" then
+			return tostring(value)
+		end
+		local keys = {}
+		for key in pairs(value) do
+			table.insert(keys, tostring(key))
+		end
+		table.sort(keys)
+		local partsOut = {}
+		for _, key in ipairs(keys) do
+			table.insert(partsOut, key .. "=" .. canonical(value[key]))
+		end
+		return "{" .. table.concat(partsOut, ",") .. "}"
+	end
+
+	local strategy = config.strategy or {}
+	parts[#parts + 1] = "strat:" .. tostring(strategy.name or "rooms_and_corridors")
+	if strategy.params ~= nil then
+		parts[#parts + 1] = "params:" .. canonical(strategy.params)
+	end
+	local world = config.world or {}
+	parts[#parts + 1] = table.concat({
+		"world",
+		tostring(world.sizeTier or ""),
+		tostring(world.boundaryMode or ""),
+		tostring(world.worldSizeChunks or ""),
+		tostring(world.generationRadius or ""),
+	}, ":")
+
 	local function band(value: any): string
 		if type(value) == "table" then
 			return tostring(value[1]) .. "-" .. tostring(value[2])
