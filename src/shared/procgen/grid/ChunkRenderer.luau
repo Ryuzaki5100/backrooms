@@ -290,14 +290,14 @@ local function walls(parts: { Part }, layout: any, originX: number, originZ: num
 				j += 1
 				continue
 			end
-			local _, top = wallSpanE(layout, i, j)
+			local bottom, top = wallSpanE(layout, i, j)
 			local start = j
 			while j + 1 <= n do
 				local nextIndex = idx(layout, i, j + 1)
 				if not layout.sealedE[nextIndex] then
 					break
 				end
-				local _, nextTop = wallSpanE(layout, i, j + 1)
+				local nextBottom, nextTop = wallSpanE(layout, i, j + 1)
 				if nextBottom ~= bottom or nextTop ~= top then
 					break
 				end
@@ -322,14 +322,14 @@ local function walls(parts: { Part }, layout: any, originX: number, originZ: num
 				i += 1
 				continue
 			end
-			local _, top = wallSpanS(layout, i, j)
+			local bottom, top = wallSpanS(layout, i, j)
 			local start = i
 			while i + 1 <= n do
 				local nextIndex = idx(layout, i + 1, j)
 				if not layout.sealedS[nextIndex] then
 					break
 				end
-				local _, nextTop = wallSpanS(layout, i + 1, j)
+				local nextBottom, nextTop = wallSpanS(layout, i + 1, j)
 				if nextBottom ~= bottom or nextTop ~= top then
 					break
 				end
@@ -516,7 +516,7 @@ local function hangWalls(
 				j += 1
 				continue
 			end
-			local _, top = wallSpanE(layout, i, j)
+			local top = select(2, wallSpanE(layout, i, j))
 			local hangBottom = top - depth
 			local start = j
 			while j + 1 <= n do
@@ -524,7 +524,7 @@ local function hangWalls(
 				if not layout.hangE[nextIndex] then
 					break
 				end
-				local _, nextTop = wallSpanE(layout, i, j + 1)
+				local nextTop = select(2, wallSpanE(layout, i, j + 1))
 				if nextTop - depth ~= hangBottom or nextTop ~= top then
 					break
 				end
@@ -549,7 +549,7 @@ local function hangWalls(
 				i += 1
 				continue
 			end
-			local _, top = wallSpanS(layout, i, j)
+			local top = select(2, wallSpanS(layout, i, j))
 			local hangBottom = top - depth
 			local start = i
 			while i + 1 <= n do
@@ -557,7 +557,7 @@ local function hangWalls(
 				if not layout.hangS[nextIndex] then
 					break
 				end
-				local _, nextTop = wallSpanS(layout, i + 1, j)
+				local nextTop = select(2, wallSpanS(layout, i + 1, j))
 				if nextTop - depth ~= hangBottom or nextTop ~= top then
 					break
 				end
