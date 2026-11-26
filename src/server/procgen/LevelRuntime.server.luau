@@ -185,11 +185,26 @@ if spawn ~= nil then
 		)
 	)
 else
-	warn("[noclip] no qualifying spawn cell in chunk 0:0; spawning at its centre cell")
-	local centre = make.n // 2
-	spawnX = (spawnChunkX * make.n + centre + 0.5) * cell
-	spawnZ = (spawnChunkZ * make.n + centre + 0.5) * cell
-	spawnFloorY = 0
+	warn(
+		"[noclip] no qualifying spawn cell in chunk 0:0; spawning at a walkable cell near its centre"
+	)
+	-- Nearest walkable cell (not solid, not template) to the chunk centre, never a solid one.
+	local centre = make.n // 2 + 1
+	local bestI, bestJ, bestDist = centre, centre, math.huge
+	for j = 1, make.n do
+		for i = 1, make.n do
+			local index = ChunkLayout.index(make.n, i, j)
+			if spawnLayout.solid[index] ~= true and spawnLayout.templateCell[index] ~= true then
+				local dist = (i - centre) ^ 2 + (j - centre) ^ 2
+				if dist < bestDist then
+					bestI, bestJ, bestDist = i, j, dist
+				end
+			end
+		end
+	end
+	spawnX = (spawnChunkX * make.n + bestI - 0.5) * cell
+	spawnZ = (spawnChunkZ * make.n + bestJ - 0.5) * cell
+	spawnFloorY = spawnLayout.floorY[ChunkLayout.index(make.n, bestI, bestJ)] or 0
 end
 
 -- The 3 x 3 block around the spawn chunk, built before any character is placed.
@@ -201,16 +216,28 @@ for dz = -1, 1 do
 	end
 end
 
--- Workspace.SpawnLocation is Rojo-managed, so it stays; it only stops being the
--- spawn point and stops being an obstacle inside the level.
+-- Workspace.SpawnLocation is Rojo-managed, so it stays. Roblox places a spawning
+-- character after CharacterAdded fires (overwriting any pivot set there), so the
+-- native spawn is made to be the generated spawn: the pad moves to the spawn
+-- cell, top face flush with the floor, buried in the floor mass and invisible.
+-- This runs before PlayerAdded is connected, so before any character exists.
 local spawnLocation = workspace:FindFirstChild("SpawnLocation")
 if spawnLocation ~= nil and spawnLocation:IsA("SpawnLocation") then
-	spawnLocation.Enabled = false
-	spawnLocation.CanCollide = false
-	spawnLocation.CanTouch = false
+	spawnLocation.Enabled = true
+	spawnLocation.Neutral = true
 	spawnLocation.Transparency = 1
+	spawnLocation.CanTouch = false
+	spawnLocation.CanCollide = true
+	spawnLocation.Anchored = true
+	spawnLocation.CFrame = CFrame.new(spawnX, spawnFloorY - spawnLocation.Size.Y / 2, spawnZ)
+else
+	warn("[noclip] Workspace.SpawnLocation missing; relying on the spawn correction")
 end
 
+local SAFETY_RADIUS = 6
+local SAFETY_HEIGHT = 12
+
+-- Safety net: if native spawning put the character somewhere else, move it.
 local function placeCharacter(character: Model)
 	local humanoid = character:WaitForChild("Humanoid", 10)
 	local root = character:WaitForChild("HumanoidRootPart", 10)
@@ -222,6 +249,20 @@ local function placeCharacter(character: Model)
 	then
 		return
 	end
+	while character.Parent == nil do
+		character.AncestryChanged:Wait()
+	end
+	RunService.Heartbeat:Wait()
+	local position = root.Position
+	local offXZ = math.sqrt((position.X - spawnX) ^ 2 + (position.Z - spawnZ) ^ 2)
+	if
+		offXZ <= SAFETY_RADIUS
+		and position.Y >= spawnFloorY
+		and position.Y <= spawnFloorY + SAFETY_HEIGHT
+	then
+		return
+	end
+	warn("[noclip] spawn correction applied")
 	-- Feet on the floor: the root's centre sits HipHeight + half its height above.
 	local lift = humanoid.HipHeight + root.Size.Y / 2 + 0.25
 	character:PivotTo(CFrame.new(spawnX, spawnFloorY + lift, spawnZ))
