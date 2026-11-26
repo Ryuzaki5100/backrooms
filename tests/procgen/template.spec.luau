@@ -292,7 +292,7 @@ H.test("a template asks for a clone at the footprint corner, not a box", functio
 	)
 end)
 
-H.test("the footprint is clear: no procedural floor, band or shell", function()
+H.test("the footprint is clear: parts only below the model or above its roof", function()
 	local spec = { { ref = "manila", footprint = { w = 3, d = 3 }, count = 1, spacing = 6 } }
 	local decorated = decoratedChunk(spec)
 	H.ok(decorated ~= nil, "level 0 places the manila template somewhere")
@@ -301,8 +301,12 @@ H.test("the footprint is clear: no procedural floor, band or shell", function()
 	local originX = decorated.cx * decorated.n * cell
 	local originZ = decorated.cz * decorated.n * cell
 	local parts = ChunkRenderer.describe(decorated, { style = { budget = 9000 } })
-	local checked = 0
+	local checked, caps, bases = 0, 0, 0
 	for _, template in ipairs(decorated.templates) do
+		local level =
+			decorated.floorY[ChunkLayout.index(decorated.n, template.cellX, template.cellZ)]
+		local roof = level + ChunkRenderer.templateHeight(template.modelId)
+		local underside = level - ChunkRenderer.templateDepth(template.modelId)
 		local x0 = originX + (template.cellX - 1) * cell
 		local z0 = originZ + (template.cellZ - 1) * cell
 		local x1 = x0 + template.w * cell
@@ -314,16 +318,46 @@ H.test("the footprint is clear: no procedural floor, band or shell", function()
 				local minZ = part.position[3] - part.size[3] / 2
 				local maxZ = part.position[3] + part.size[3] / 2
 				local overlaps = minX < x1 and maxX > x0 and minZ < z1 and maxZ > z0
-				H.eq(
-					overlaps,
-					false,
-					part.kind .. " " .. part.owner .. " overlaps the template footprint"
-				)
-				checked += 1
+				if overlaps then
+					local minY = part.position[2] - part.size[2] / 2
+					local maxY = part.position[2] + part.size[2] / 2
+					-- The model owns the band between its deepest geometry and its
+					-- roof; the world may only close below it (base) and above it (cap).
+					H.ok(
+						minY >= roof or maxY <= underside,
+						part.kind
+							.. " "
+							.. part.owner
+							.. " intrudes into the model's envelope "
+							.. underside
+							.. ".."
+							.. roof
+					)
+					if part.kind == "templateCap" then
+						caps += 1
+						H.eq(minY, roof, "the cap starts at the roof")
+						H.eq(minX, x0, "the cap covers the footprint")
+						H.eq(maxX, x1, "the cap covers the footprint")
+					elseif part.kind == "templateBase" then
+						bases += 1
+						H.eq(maxY, underside, "the base ends at the model's deepest geometry")
+					end
+					checked += 1
+				end
 			end
 		end
 	end
 	H.ok(checked > 0, "checked some parts")
+	H.eq(caps, #decorated.templates, "one cap per template")
+	H.eq(bases, #decorated.templates, "one base per template")
+end)
+
+H.test("template heights are explicit per asset id", function()
+	H.eq(ChunkRenderer.templateHeight("manila_room"), 12.5)
+	H.eq(ChunkRenderer.templateHeight("stairwell_mezzanine"), 16.5)
+	H.eq(ChunkRenderer.templateHeight("sunken_pool"), 12.5)
+	H.eq(ChunkRenderer.templateDepth("sunken_pool"), 8.5, "the recess is below the plane")
+	H.eq(ChunkRenderer.templateHeight("unknown_model"), 13, "an id with no row gets the default")
 end)
 
 -- Every chunk's templates, keyed "cx,cz", for a 3x3 Level 0 world.

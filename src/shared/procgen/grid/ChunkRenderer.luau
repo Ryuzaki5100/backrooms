@@ -10,8 +10,19 @@
 -- merged per level (a full-chunk slab at one level would float over or run
 -- through cells at other levels).
 --
+-- Closed world (task 0009, ADR 0032 D67): floors and ceilings are solid mass,
+-- not 0.5-stud slabs. A floor part is a box from the chunk base up to its walking
+-- surface, a ceiling part a box from its underside up to the chunk top, so a
+-- sunken area, a ramp side or an open rise never shows the sky box underneath.
+-- Mass is the same greedy rectangles as before: thicker, not more.
+--
 -- Pure: emits the same part specs `Geometry` emits, plus `wedge = true` for
 -- ramps, so `Build.apply` needs one new instance type.
+--
+-- Yaw is in DEGREES (`Build.apply` applies `math.rad(yaw)`). A wedge at yaw 0
+-- rises towards +Z; rotating by yaw turns +Z towards +X, so: axis z, dir +1 -> 0;
+-- axis z, dir -1 -> 180; axis x, dir +1 -> 90; axis x, dir -1 -> -90. `dir` points
+-- at the HIGH end of the ramp (see `WalkGraph`).
 
 local LayoutModule = if script ~= nil
 	then require(script.Parent.ChunkLayout)
@@ -19,9 +30,46 @@ local LayoutModule = if script ~= nil
 
 local ChunkRenderer = {}
 
-local FLOOR_THICKNESS = 0.5
-local CEILING_THICKNESS = 0.5
 local STEP_DEPTH = 4
+
+-- Mass bounds. A chunk only reads its own floors and its east/south borders, not
+-- its north/west neighbours, so the base cannot be matched to a neighbour: it has
+-- to be deep enough that no neighbour floor can sit below it. Terrain floors are
+-- {-rise, 0, +rise} (rise 4 shipped), so two chunks differ by at most 2 * rise = 8
+-- studs; 10 covers that with 2 to spare. If a level ever ships a rise above 4,
+-- raise BASE_MARGIN to 2 * rise + 2.
+local BASE_MARGIN = 10
+-- Ceiling mass above the highest ceiling of the chunk. Only appearance: closure
+-- comes from every cell having mass over it, not from how thick it is.
+local TOP_MARGIN = 2
+
+-- Vertical envelope of a template model, by asset id (the Model's
+-- `noclipTemplateId`), measured from its floor plane. `height` is the roof top,
+-- `maxHeight + 0.5` (the contract's geometry extent,
+-- `20-assets/templates/contract.md`): the cap over a footprint starts there.
+-- `depth` is how far geometry reaches below the plane, `verticalAmount + 0.5` for
+-- a drop: the floor mass under a footprint stops there. MUST match the asset's
+-- `maxHeight` / `verticalAmount` attributes: a height too low walls in the
+-- model's interior, one too high leaves a slit over the roof; a depth too large
+-- fills a recess. Like Template.MODELS this is explicit, not derived:
+-- manila_room 12 clear + 0.5 roof; stairwell_mezzanine maxHeight 16 (its
+-- platform rises above the plane, nothing sinks below it); sunken_pool
+-- maxHeight 12 with an 8-stud recess.
+local TEMPLATE_ENVELOPES: { [string]: { height: number, depth: number } } = {
+	manila_room = { height = 12.5, depth = 0.5 },
+	stairwell_mezzanine = { height = 16.5, depth = 0.5 },
+	sunken_pool = { height = 12.5, depth = 8.5 },
+}
+-- An id with no row: a conservative guess, the manila-room-class envelope.
+local DEFAULT_TEMPLATE_ENVELOPE = { height = 13, depth = 0.5 }
+
+function ChunkRenderer.templateHeight(modelId: string): number
+	return (TEMPLATE_ENVELOPES[modelId] or DEFAULT_TEMPLATE_ENVELOPE).height
+end
+
+function ChunkRenderer.templateDepth(modelId: string): number
+	return (TEMPLATE_ENVELOPES[modelId] or DEFAULT_TEMPLATE_ENVELOPE).depth
+end
 
 type Part = {
 	kind: string,
@@ -127,32 +175,68 @@ local function ownerOf(layout: any): string
 	return "chunk:" .. layout.cx .. ":" .. layout.cz
 end
 
--- Floors: greedy rectangle merge per height level, skipping ramp cells (the
--- wedge replaces the floor there) and template cells (the model owns its floor).
+-- Where the floor mass stops under a cell: the walking surface, or for a ramp
+-- cell the low edge of the wedge (the wedge itself fills the rest).
+local function massTop(layout: any, i: number, j: number): number
+	local ramp = layout.ramp[idx(layout, i, j)]
+	if ramp ~= nil then
+		return ramp.lowY
+	end
+	return floorAt(layout, i, j)
+end
+
+-- Base and top of a chunk's mass: the lowest floor (cells, ramp low edges, and
+-- the east/south border floors) minus BASE_MARGIN, and the highest ceiling (cells,
+-- border ceilings and template roofs) plus TOP_MARGIN.
+local function massBounds(layout: any): (number, number)
+	local lowest, highest = math.huge, -math.huge
+	for j = 1, layout.n do
+		for i = 1, layout.n do
+			lowest = math.min(lowest, massTop(layout, i, j), floorAt(layout, i, j))
+			highest = math.max(highest, ceilingAt(layout, i, j))
+		end
+		lowest = math.min(lowest, layout.outFloorE[j] or 0, layout.outFloorS[j] or 0)
+		highest = math.max(
+			highest,
+			(layout.outFloorE[j] or 0) + (layout.outHeightE[j] or 0),
+			(layout.outFloorS[j] or 0) + (layout.outHeightS[j] or 0)
+		)
+	end
+	for _, template in ipairs(layout.templates) do
+		local level = floorAt(layout, template.cellX, template.cellZ)
+		highest = math.max(highest, level + ChunkRenderer.templateHeight(template.modelId))
+	end
+	return lowest - BASE_MARGIN, highest + TOP_MARGIN
+end
+
+-- Floors: greedy rectangle merge per height level, as solid mass from the chunk
+-- base up to the walking surface. A ramp cell contributes a column up to the
+-- wedge's low edge and merges with floors at that level; the wedge fills the
+-- rest. Template cells are skipped (the model owns its floor).
 local function floors(
 	parts: { Part },
 	layout: any,
 	originX: number,
 	originZ: number,
-	style: any
+	style: any,
+	base: number
 ): ()
 	local n, cell = layout.n, layout.cell
 	local taken: { [number]: boolean } = {}
 	for j = 1, n do
 		for i = 1, n do
 			local startIndex = idx(layout, i, j)
-			if taken[startIndex] or layout.ramp[startIndex] ~= nil or reserved(layout, i, j) then
+			if taken[startIndex] or reserved(layout, i, j) then
 				continue
 			end
-			local level = floorAt(layout, i, j)
+			local level = massTop(layout, i, j)
 			local iEnd = i
 			while iEnd + 1 <= n do
 				local nextIndex = idx(layout, iEnd + 1, j)
 				if
 					taken[nextIndex]
-					or layout.ramp[nextIndex] ~= nil
 					or reserved(layout, iEnd + 1, j)
-					or floorAt(layout, iEnd + 1, j) ~= level
+					or massTop(layout, iEnd + 1, j) ~= level
 				then
 					break
 				end
@@ -165,9 +249,8 @@ local function floors(
 					local nextIndex = idx(layout, k, jEnd + 1)
 					if
 						taken[nextIndex]
-						or layout.ramp[nextIndex] ~= nil
 						or reserved(layout, k, jEnd + 1)
-						or floorAt(layout, k, jEnd + 1) ~= level
+						or massTop(layout, k, jEnd + 1) ~= level
 					then
 						canGrow = false
 						break
@@ -184,9 +267,9 @@ local function floors(
 			end
 			local width = (iEnd - i + 1) * cell
 			local depth = (jEnd - j + 1) * cell
-			add(parts, "floor", ownerOf(layout), { width, FLOOR_THICKNESS, depth }, {
+			add(parts, "floor", ownerOf(layout), { width, level - base, depth }, {
 				originX + (i - 1) * cell + width / 2,
-				level - FLOOR_THICKNESS / 2,
+				(level + base) / 2,
 				originZ + (j - 1) * cell + depth / 2,
 			}, style.materials.floor)
 		end
@@ -195,16 +278,19 @@ end
 
 -- Ceilings: greedy rectangle merge per ceiling level, the same way floors()
 -- merges per floor level. A rectangle only holds cells whose ceiling is at its
--- level, so a lower band never runs through a taller cell (task 0003). Template
--- cells are skipped: the model owns its own ceiling, and a coplanar slab would
--- z-fight (template contract, "Floor plane"). Solid cells are not special-cased,
--- as in floors(). Only levels above zero are built, as before.
+-- level, so a lower band never runs through a taller cell (task 0003). Each is
+-- solid mass from the underside up to the chunk top. Template cells are skipped:
+-- the model owns its own ceiling, and a coplanar slab would z-fight (template
+-- contract, "Floor plane"); `templateCaps` closes above the model instead. Solid
+-- cells are not special-cased, as in floors(). Only levels above zero are built,
+-- as before.
 local function ceilings(
 	parts: { Part },
 	layout: any,
 	originX: number,
 	originZ: number,
-	style: any
+	style: any,
+	top: number
 ): ()
 	local n, cell = layout.n, layout.cell
 	local taken: { [number]: boolean } = {}
@@ -252,9 +338,9 @@ local function ceilings(
 			end
 			local width = (iEnd - i + 1) * cell
 			local depth = (jEnd - j + 1) * cell
-			add(parts, "ceiling", ownerOf(layout), { width, CEILING_THICKNESS, depth }, {
+			add(parts, "ceiling", ownerOf(layout), { width, top - level, depth }, {
 				originX + (i - 1) * cell + width / 2,
-				level + CEILING_THICKNESS / 2,
+				(level + top) / 2,
 				originZ + (j - 1) * cell + depth / 2,
 			}, style.materials.ceiling)
 		end
@@ -754,22 +840,24 @@ local function steps(parts: { Part }, layout: any, originX: number, originZ: num
 	end
 end
 
+-- World-edge walls, from the chunk base to the chunk top so the enclosure has no
+-- slit under or over it.
 local function perimeter(
 	parts: { Part },
 	layout: any,
 	originX: number,
 	originZ: number,
 	style: any,
-	worldChunks: number
+	worldChunks: number,
+	base: number,
+	top: number
 ): ()
 	if worldChunks == nil then
 		return
 	end
 	local span = layout.n * layout.cell
-	local tallest = 0
-	for index = 1, layout.n * layout.n do
-		tallest = math.max(tallest, layout.floorY[index] + layout.height[index])
-	end
+	local height = top - base
+	local centreY = (top + base) / 2
 	local owner = ownerOf(layout)
 	local thickness = style.wallThickness
 	if layout.cx == 0 then
@@ -777,8 +865,8 @@ local function perimeter(
 			parts,
 			"wall",
 			owner,
-			{ thickness, tallest, span },
-			{ originX, tallest / 2, originZ + span / 2 },
+			{ thickness, height, span },
+			{ originX, centreY, originZ + span / 2 },
 			style.materials.wall
 		)
 	end
@@ -787,8 +875,8 @@ local function perimeter(
 			parts,
 			"wall",
 			owner,
-			{ thickness, tallest, span },
-			{ originX + span, tallest / 2, originZ + span / 2 },
+			{ thickness, height, span },
+			{ originX + span, centreY, originZ + span / 2 },
 			style.materials.wall
 		)
 	end
@@ -797,8 +885,8 @@ local function perimeter(
 			parts,
 			"wall",
 			owner,
-			{ span, tallest, thickness },
-			{ originX + span / 2, tallest / 2, originZ },
+			{ span, height, thickness },
+			{ originX + span / 2, centreY, originZ },
 			style.materials.wall
 		)
 	end
@@ -807,8 +895,8 @@ local function perimeter(
 			parts,
 			"wall",
 			owner,
-			{ span, tallest, thickness },
-			{ originX + span / 2, tallest / 2, originZ + span },
+			{ span, height, thickness },
+			{ originX + span / 2, centreY, originZ + span },
 			style.materials.wall
 		)
 	end
@@ -833,6 +921,63 @@ local function details(
 			style.materials.ceiling,
 			{ canCollide = false }
 		)
+	end
+end
+
+-- Template caps (task 0009): the procedural ceiling is cut over a footprint and
+-- the model's own roof (`templateHeight`) can sit below the neighbouring
+-- ceilings, which left the footprint open to the sky. A cap is a solid box over
+-- the whole footprint from the roof up to the chunk top. Its side faces are also
+-- the skirt over the model's walls: any neighbouring ceiling above the roof ends
+-- against the cap, so there is no band left open around the footprint.
+local function templateCaps(
+	parts: { Part },
+	layout: any,
+	originX: number,
+	originZ: number,
+	style: any,
+	top: number
+): ()
+	local cell = layout.cell
+	for _, template in ipairs(layout.templates) do
+		local level = floorAt(layout, template.cellX, template.cellZ)
+		local bottom = level + ChunkRenderer.templateHeight(template.modelId)
+		local width, depth = template.w * cell, template.d * cell
+		add(parts, "templateCap", "template:" .. template.ref, { width, top - bottom, depth }, {
+			originX + (template.cellX - 1) * cell + width / 2,
+			(bottom + top) / 2,
+			originZ + (template.cellZ - 1) * cell + depth / 2,
+		}, style.materials.ceiling)
+	end
+end
+
+-- Template bases (task 0009): the model brings its own floor, but nothing below
+-- it, so a footprint beside a lower floor (a plateau template next to ground
+-- level) opened a tunnel under the model. Solid mass from the chunk base up to
+-- the deepest geometry of the model (`templateDepth`); a drop template keeps its
+-- recess. Cells beside a template at the same level cannot reach under it, and a
+-- drop template beside a lower neighbour still shows a shallow cavity between
+-- the walkway slab and the mass, which is inside the model's own shell.
+local function templateBases(
+	parts: { Part },
+	layout: any,
+	originX: number,
+	originZ: number,
+	style: any,
+	base: number
+): ()
+	local cell = layout.cell
+	for _, template in ipairs(layout.templates) do
+		local level = floorAt(layout, template.cellX, template.cellZ)
+		local top = level - ChunkRenderer.templateDepth(template.modelId)
+		if top > base then
+			local width, depth = template.w * cell, template.d * cell
+			add(parts, "templateBase", "template:" .. template.ref, { width, top - base, depth }, {
+				originX + (template.cellX - 1) * cell + width / 2,
+				(top + base) / 2,
+				originZ + (template.cellZ - 1) * cell + depth / 2,
+			}, style.materials.floor)
+		end
 	end
 end
 
@@ -904,8 +1049,10 @@ function ChunkRenderer.describe(layout: any, options: any?): { Part }
 	local originX, originZ = LayoutModule.origin(layout)
 	local debug = options ~= nil and options.debug == true
 
-	floors(parts, layout, originX, originZ, style)
-	ceilings(parts, layout, originX, originZ, style)
+	local base, top = massBounds(layout)
+
+	floors(parts, layout, originX, originZ, style, base)
+	ceilings(parts, layout, originX, originZ, style, top)
 	solids(parts, layout, originX, originZ, style)
 	walls(parts, layout, originX, originZ, style)
 	soffits(parts, layout, originX, originZ, style)
@@ -913,9 +1060,11 @@ function ChunkRenderer.describe(layout: any, options: any?): { Part }
 	columns(parts, layout, originX, originZ, style)
 	ramps(parts, layout, originX, originZ, style)
 	steps(parts, layout, originX, originZ, style)
+	templateBases(parts, layout, originX, originZ, style, base)
+	templateCaps(parts, layout, originX, originZ, style, top)
 	templateModels(parts, layout, originX, originZ, style)
 	if options ~= nil and options.enclosure == "perimeter" then
-		perimeter(parts, layout, originX, originZ, style, options.worldChunks)
+		perimeter(parts, layout, originX, originZ, style, options.worldChunks, base, top)
 	end
 	if debug then
 		details(parts, layout, originX, originZ, style)

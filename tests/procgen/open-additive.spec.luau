@@ -481,10 +481,10 @@ H.test("pinned Level 0 fingerprint (templates clear their footprint)", function(
 	config.world.worldSizeChunks = 3
 
 	local fp42, count42 = partFingerprint(config, 42)
-	H.eq(fp42, "35921ec08c4629ba", "seed 42 fingerprint")
-	H.eq(count42, 506, "seed 42 part count")
+	H.eq(fp42, "2a1d1eac7fbc544a", "seed 42 fingerprint")
+	H.eq(count42, 524, "seed 42 part count (506 + a cap and a base per template)")
 
 	local fp1337, count1337 = partFingerprint(config, 1337)
-	H.eq(fp1337, "77a6350f2e2343f1", "seed 1337 fingerprint")
-	H.eq(count1337, 482, "seed 1337 part count")
+	H.eq(fp1337, "91dd197390bbc4e5", "seed 1337 fingerprint")
+	H.eq(count1337, 500, "seed 1337 part count")
 end)
