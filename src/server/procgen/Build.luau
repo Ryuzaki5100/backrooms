@@ -6,6 +6,11 @@
 -- module only applies them. Keeping it dumb is what lets the pure layer be
 -- tested under Lune and hashed across Lune and Studio.
 --
+-- Two entry points share one per-spec instancing helper: `apply` builds a whole
+-- plan into `Workspace.NoclipBuild`; `applyChunk` / `removeChunk` build and drop
+-- one streamed chunk as a Folder `chunk_<key>` under a caller-chosen parent
+-- (`LevelRuntime`).
+--
 -- QA rule (ADR 0011): a non-debug apply refuses to create any part tagged `qa`.
 -- That guard exists so debug markers cannot ship by accident.
 --
@@ -98,22 +103,65 @@ function Build.clear(): ()
 	end
 end
 
-function Build.apply(parts: { any }, options: any?): Folder
-	local debug = options ~= nil and options.debug == true
-
-	if not debug then
-		for _, spec in ipairs(parts) do
-			if spec.tag == "qa" then
-				error(
-					string.format(
-						"Build.apply: refusing to build QA part %q in a non-debug build",
-						tostring(spec.owner)
-					),
-					2
-				)
-			end
+-- QA rule: a non-debug build refuses any part tagged `qa`.
+local function refuseQa(parts: { any }, options: any?, caller: string): ()
+	if options ~= nil and options.debug == true then
+		return
+	end
+	for _, spec in ipairs(parts) do
+		if spec.tag == "qa" then
+			error(
+				string.format(
+					"%s: refusing to build QA part %q in a non-debug build",
+					caller,
+					tostring(spec.owner)
+				),
+				3
+			)
 		end
 	end
+end
+
+-- One spec -> one instance under `folder`. Shared by `apply` and `applyChunk` so
+-- the two cannot diverge on how a part or a template is made.
+local function instanceSpec(spec: any, folder: Folder): ()
+	if spec.template ~= nil then
+		applyTemplate(spec, folder)
+		return
+	end
+
+	-- Ramps are true wedges (ADR 0029), not tilted boxes. Part yaw is in degrees
+	-- (ChunkRenderer documents the wedge mapping), hence math.rad(spec.yaw).
+	local part: BasePart = if spec.wedge == true
+		then Instance.new("WedgePart")
+		else Instance.new("Part")
+	part.Name = tostring(spec.owner) .. "_" .. tostring(spec.kind)
+	part.Size = toVector(spec.size)
+	local cframe = CFrame.new(toVector(spec.position))
+	if spec.yaw ~= nil and spec.yaw ~= 0 then
+		cframe = cframe * CFrame.Angles(0, math.rad(spec.yaw), 0)
+	end
+	if spec.pitch ~= nil and spec.pitch ~= 0 then
+		cframe = cframe * CFrame.Angles(0, 0, math.rad(spec.pitch))
+	end
+	part.CFrame = cframe
+	part.Anchored = true
+	part.CanCollide = spec.canCollide ~= false
+	part.Material = materialOf(spec.material)
+	part.Color = Color3.new(spec.color[1], spec.color[2], spec.color[3])
+	part.TopSurface = Enum.SurfaceType.Smooth
+	part.BottomSurface = Enum.SurfaceType.Smooth
+	part:SetAttribute("noclipKind", spec.kind)
+	part:SetAttribute("noclipOwner", spec.owner)
+	if spec.tag ~= nil then
+		part:SetAttribute("noclipTag", spec.tag)
+		CollectionService:AddTag(part, "noclip." .. tostring(spec.tag))
+	end
+	part.Parent = folder
+end
+
+function Build.apply(parts: { any }, options: any?): Folder
+	refuseQa(parts, options, "Build.apply")
 
 	Build.clear()
 
@@ -121,40 +169,48 @@ function Build.apply(parts: { any }, options: any?): Folder
 	folder.Name = FOLDER_NAME
 
 	for _, spec in ipairs(parts) do
-		if spec.template ~= nil then
-			applyTemplate(spec, folder)
-			continue
-		end
-
-		-- Ramps are true wedges (ADR 0029), not tilted boxes. Part yaw is in degrees
-		-- (ChunkRenderer documents the wedge mapping), hence math.rad(spec.yaw).
-		local part = Instance.new(if spec.wedge == true then "WedgePart" else "Part")
-		part.Name = tostring(spec.owner) .. "_" .. tostring(spec.kind)
-		part.Size = toVector(spec.size)
-		local cframe = CFrame.new(toVector(spec.position))
-		if spec.yaw ~= nil and spec.yaw ~= 0 then
-			cframe = cframe * CFrame.Angles(0, math.rad(spec.yaw), 0)
-		end
-		if spec.pitch ~= nil and spec.pitch ~= 0 then
-			cframe = cframe * CFrame.Angles(0, 0, math.rad(spec.pitch))
-		end
-		part.CFrame = cframe
-		part.Anchored = true
-		part.CanCollide = spec.canCollide ~= false
-		part.Material = materialOf(spec.material)
-		part.Color = Color3.new(spec.color[1], spec.color[2], spec.color[3])
-		part.TopSurface = Enum.SurfaceType.Smooth
-		part.BottomSurface = Enum.SurfaceType.Smooth
-		part:SetAttribute("noclipKind", spec.kind)
-		part:SetAttribute("noclipOwner", spec.owner)
-		if spec.tag ~= nil then
-			part:SetAttribute("noclipTag", spec.tag)
-			CollectionService:AddTag(part, "noclip." .. tostring(spec.tag))
-		end
-		part.Parent = folder
+		instanceSpec(spec, folder)
 	end
 
 	folder.Parent = workspace
+	return folder
+end
+
+local function chunkFolderName(key: string): string
+	return "chunk_" .. key
+end
+
+function Build.removeChunk(key: string, parent: Instance): ()
+	local name = chunkFolderName(key)
+	-- A replaced or failed build never leaves a duplicate, but clear any that exist.
+	for _, child in ipairs(parent:GetChildren()) do
+		if child.Name == name then
+			child:Destroy()
+		end
+	end
+end
+
+-- One streamed chunk: a Folder `chunk_<key>` under `parent`, replacing any
+-- previous one. The folder is filled while detached and parented last, so a spec
+-- that errors (a missing template) leaves no half-built chunk behind and keeps
+-- the old one, if any.
+function Build.applyChunk(key: string, specs: { any }, parent: Instance, options: any?): Folder
+	refuseQa(specs, options, "Build.applyChunk")
+
+	local folder = Instance.new("Folder")
+	folder.Name = chunkFolderName(key)
+	local ok, err = pcall(function()
+		for _, spec in ipairs(specs) do
+			instanceSpec(spec, folder)
+		end
+	end)
+	if not ok then
+		folder:Destroy()
+		error(err, 0)
+	end
+
+	Build.removeChunk(key, parent)
+	folder.Parent = parent
 	return folder
 end
 
