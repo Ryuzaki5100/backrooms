@@ -198,24 +198,69 @@ H.test("placement follows a hashed start, not a corner-first scan", function()
 	H.ok(awayFromCorner >= 24, "most seeds do not place in the corner: " .. awayFromCorner)
 end)
 
-H.test("templates are a debug marker in production nothing is emitted", function()
-	local spec = { { ref = "manila", footprint = { w = 3, d = 3 }, count = 1, spacing = 6 } }
+-- The first Level 0 chunk (of the 3x3 world) that carries a template.
+local function decoratedChunk(spec: any): any
 	local make = demo(42, spec)
-	local decorated = nil
 	for cz = 0, 2 do
 		for cx = 0, 2 do
 			local layout = OpenAdditive.layout(make, cx, cz)
-			if #layout.templates > 0 and decorated == nil then
-				decorated = layout
+			if #layout.templates > 0 then
+				return layout
 			end
 		end
 	end
+	return nil
+end
+
+H.test("config refs map to authored model ids explicitly", function()
+	H.eq(Template.modelId("manila"), "manila_room")
+	H.eq(Template.modelId("stairwell"), "stairwell_mezzanine")
+	H.eq(Template.modelId("sunken"), "sunken_pool")
+	H.eq(Template.modelId("manila_room"), "manila_room", "an id needs no table row")
+
+	local spec = { { ref = "stairwell", footprint = { w = 3, d = 3 }, count = 1 } }
+	local layout = openLayout(10, 16)
+	Template.apply(worldFor({ templates = spec }, 7), layout)
+	local template = layout.templates[1]
+	H.ok(template ~= nil, "placed")
+	H.eq(template.ref, "stairwell")
+	H.eq(template.modelId, "stairwell_mezzanine", "the descriptor carries the asset id")
+end)
+
+H.test("a template asks for a clone at the footprint corner, not a box", function()
+	local spec = { { ref = "manila", footprint = { w = 3, d = 3 }, count = 1, spacing = 6 } }
+	local decorated = decoratedChunk(spec)
 	H.ok(decorated ~= nil, "level 0 places the manila template somewhere")
 
-	local production = ChunkRenderer.describe(decorated, { style = { budget = 9000 } })
-	for _, part in ipairs(production) do
-		H.neq(part.kind, "template", "production emits no template part")
+	local orders = {}
+	for _, part in
+		ipairs(ChunkRenderer.describe(decorated, {
+			style = { budget = 9000 },
+		}))
+	do
+		if part.kind == "template" then
+			table.insert(orders, part)
+		end
 	end
+	H.eq(#orders, #decorated.templates, "one clone order per template")
+
+	local template = decorated.templates[1]
+	local order = orders[1]
+	local level = decorated.floorY[ChunkLayout.index(decorated.n, template.cellX, template.cellZ)]
+	H.eq(order.owner, "template:" .. template.ref)
+	H.eq(order.template, "manila_room", "the spec carries the asset id")
+	H.eq(order.size[2], 0, "the model carries its own geometry")
+	H.eq(
+		order.position[1],
+		decorated.cx * decorated.n * decorated.cell + (template.cellX - 1) * decorated.cell,
+		"x is the footprint's minimum corner"
+	)
+	H.eq(order.position[2], level, "y is the footprint's floor plane")
+	H.eq(
+		order.position[3],
+		decorated.cz * decorated.n * decorated.cell + (template.cellZ - 1) * decorated.cell,
+		"z is the footprint's minimum corner"
+	)
 
 	local markers = {}
 	for _, part in
@@ -224,18 +269,17 @@ H.test("templates are a debug marker in production nothing is emitted", function
 			debug = true,
 		}))
 	do
-		if part.kind == "template" then
+		if part.kind == "templateMarker" then
 			table.insert(markers, part)
 		end
 	end
-	H.eq(#markers, #decorated.templates, "one marker per template")
-
-	local template = decorated.templates[1]
+	H.eq(#markers, #decorated.templates, "debug draws one marker per template")
 	local marker = markers[1]
 	H.eq(marker.owner, "template:" .. template.ref)
 	H.eq(marker.size[1], template.w * decorated.cell)
 	H.eq(marker.size[3], template.d * decorated.cell)
 	H.eq(marker.canCollide, false)
+	H.eq(marker.tag, "qa", "the marker cannot ship")
 	H.eq(
 		marker.position[1],
 		decorated.cx * decorated.n * decorated.cell + template.x,
@@ -246,4 +290,38 @@ H.test("templates are a debug marker in production nothing is emitted", function
 		decorated.cz * decorated.n * decorated.cell + template.z,
 		"marker sits at the footprint centre"
 	)
+end)
+
+H.test("the footprint is clear: no procedural floor, band or shell", function()
+	local spec = { { ref = "manila", footprint = { w = 3, d = 3 }, count = 1, spacing = 6 } }
+	local decorated = decoratedChunk(spec)
+	H.ok(decorated ~= nil, "level 0 places the manila template somewhere")
+
+	local cell = decorated.cell
+	local originX = decorated.cx * decorated.n * cell
+	local originZ = decorated.cz * decorated.n * cell
+	local parts = ChunkRenderer.describe(decorated, { style = { budget = 9000 } })
+	local checked = 0
+	for _, template in ipairs(decorated.templates) do
+		local x0 = originX + (template.cellX - 1) * cell
+		local z0 = originZ + (template.cellZ - 1) * cell
+		local x1 = x0 + template.w * cell
+		local z1 = z0 + template.d * cell
+		for _, part in ipairs(parts) do
+			if part.kind ~= "template" then
+				local minX = part.position[1] - part.size[1] / 2
+				local maxX = part.position[1] + part.size[1] / 2
+				local minZ = part.position[3] - part.size[3] / 2
+				local maxZ = part.position[3] + part.size[3] / 2
+				local overlaps = minX < x1 and maxX > x0 and minZ < z1 and maxZ > z0
+				H.eq(
+					overlaps,
+					false,
+					part.kind .. " " .. part.owner .. " overlaps the template footprint"
+				)
+				checked += 1
+			end
+		end
+	end
+	H.ok(checked > 0, "checked some parts")
 end)

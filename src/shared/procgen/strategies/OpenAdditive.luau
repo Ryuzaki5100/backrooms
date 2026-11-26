@@ -504,7 +504,8 @@ local function placeDetails(make: any, layout: any): ()
 					break
 				end
 				local index = Layout.index(n, i, j)
-				if not layout.solid[index] then
+				-- A template owns its interior: procedural decor stays out (0038).
+				if not layout.solid[index] and not layout.templateCell[index] then
 					local ok = false
 					if allowed["any_open"] then
 						ok = true

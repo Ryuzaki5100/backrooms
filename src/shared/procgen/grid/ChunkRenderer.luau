@@ -2,14 +2,13 @@
 
 -- Merged chunk renderer (ADR 0024, ADR 0029).
 --
--- The render unit is not the cell. A chunk gets merged floor rectangles per
--- height band, one ceiling slab per band, merged wall runs, merged solid runs,
--- and wedges for ramps. That is what makes cell layouts affordable in Roblox.
+-- The render unit is not the cell. A chunk gets merged floor and ceiling
+-- rectangles per height level, merged wall runs, merged solid runs, and wedges
+-- for ramps. That is what makes cell layouts affordable in Roblox.
 --
--- Terrain: `floorY` varies per cell. Floors are greedy rectangle merged per
--- level (a full-chunk slab at a raised level would float over lower cells).
--- Ceilings stay one slab per band because each cell's own band hides the higher
--- bands above it.
+-- Terrain: `floorY` varies per cell. Floors and ceilings are greedy rectangle
+-- merged per level (a full-chunk slab at one level would float over or run
+-- through cells at other levels).
 --
 -- Pure: emits the same part specs `Geometry` emits, plus `wedge = true` for
 -- ramps, so `Build.apply` needs one new instance type.
@@ -36,6 +35,9 @@ type Part = {
 	canCollide: boolean,
 	tag: string?,
 	wedge: boolean?,
+	-- A clone order, not a box: `Build.apply` clones this asset id instead of
+	-- creating a part (task 0038).
+	template: string?,
 }
 
 local DEFAULTS = {
@@ -104,6 +106,15 @@ local function idx(layout: any, i: number, j: number): number
 	return LayoutModule.index(layout.n, i, j)
 end
 
+-- A cell reserved by a template footprint (task 0036). Out-of-chunk cells are
+-- never reserved: a chunk only knows the templates it placed itself.
+local function reserved(layout: any, i: number, j: number): boolean
+	if i < 1 or j < 1 or i > layout.n or j > layout.n then
+		return false
+	end
+	return layout.templateCell[idx(layout, i, j)] == true
+end
+
 local function floorAt(layout: any, i: number, j: number): number
 	return layout.floorY[idx(layout, i, j)] or 0
 end
@@ -117,7 +128,7 @@ local function ownerOf(layout: any): string
 end
 
 -- Floors: greedy rectangle merge per height level, skipping ramp cells (the
--- wedge replaces the floor there).
+-- wedge replaces the floor there) and template cells (the model owns its floor).
 local function floors(
 	parts: { Part },
 	layout: any,
@@ -130,7 +141,7 @@ local function floors(
 	for j = 1, n do
 		for i = 1, n do
 			local startIndex = idx(layout, i, j)
-			if taken[startIndex] or layout.ramp[startIndex] ~= nil then
+			if taken[startIndex] or layout.ramp[startIndex] ~= nil or reserved(layout, i, j) then
 				continue
 			end
 			local level = floorAt(layout, i, j)
@@ -140,6 +151,7 @@ local function floors(
 				if
 					taken[nextIndex]
 					or layout.ramp[nextIndex] ~= nil
+					or reserved(layout, iEnd + 1, j)
 					or floorAt(layout, iEnd + 1, j) ~= level
 				then
 					break
@@ -154,6 +166,7 @@ local function floors(
 					if
 						taken[nextIndex]
 						or layout.ramp[nextIndex] ~= nil
+						or reserved(layout, k, jEnd + 1)
 						or floorAt(layout, k, jEnd + 1) ~= level
 					then
 						canGrow = false
@@ -180,6 +193,12 @@ local function floors(
 	end
 end
 
+-- Ceilings: greedy rectangle merge per ceiling level, the same way floors()
+-- merges per floor level. A rectangle only holds cells whose ceiling is at its
+-- level, so a lower band never runs through a taller cell (task 0003). Template
+-- cells are skipped: the model owns its own ceiling, and a coplanar slab would
+-- z-fight (template contract, "Floor plane"). Solid cells are not special-cased,
+-- as in floors(). Only levels above zero are built, as before.
 local function ceilings(
 	parts: { Part },
 	layout: any,
@@ -187,24 +206,57 @@ local function ceilings(
 	originZ: number,
 	style: any
 ): ()
-	local span = layout.n * layout.cell
-	local cx = originX + span / 2
-	local cz = originZ + span / 2
-	local seen: { [number]: boolean } = {}
-	for j = 1, layout.n do
-		for i = 1, layout.n do
+	local n, cell = layout.n, layout.cell
+	local taken: { [number]: boolean } = {}
+	for j = 1, n do
+		for i = 1, n do
+			local startIndex = idx(layout, i, j)
 			local level = ceilingAt(layout, i, j)
-			if level > 0 and not seen[level] then
-				seen[level] = true
-				add(
-					parts,
-					"ceiling",
-					ownerOf(layout),
-					{ span, CEILING_THICKNESS, span },
-					{ cx, level + CEILING_THICKNESS / 2, cz },
-					style.materials.ceiling
-				)
+			if taken[startIndex] or level <= 0 or reserved(layout, i, j) then
+				continue
 			end
+			local iEnd = i
+			while iEnd + 1 <= n do
+				local nextIndex = idx(layout, iEnd + 1, j)
+				if
+					taken[nextIndex]
+					or reserved(layout, iEnd + 1, j)
+					or ceilingAt(layout, iEnd + 1, j) ~= level
+				then
+					break
+				end
+				iEnd += 1
+			end
+			local jEnd = j
+			local canGrow = true
+			while canGrow and jEnd + 1 <= n do
+				for k = i, iEnd do
+					local nextIndex = idx(layout, k, jEnd + 1)
+					if
+						taken[nextIndex]
+						or reserved(layout, k, jEnd + 1)
+						or ceilingAt(layout, k, jEnd + 1) ~= level
+					then
+						canGrow = false
+						break
+					end
+				end
+				if canGrow then
+					jEnd += 1
+				end
+			end
+			for jj = j, jEnd do
+				for ii = i, iEnd do
+					taken[idx(layout, ii, jj)] = true
+				end
+			end
+			local width = (iEnd - i + 1) * cell
+			local depth = (jEnd - j + 1) * cell
+			add(parts, "ceiling", ownerOf(layout), { width, CEILING_THICKNESS, depth }, {
+				originX + (i - 1) * cell + width / 2,
+				level + CEILING_THICKNESS / 2,
+				originZ + (j - 1) * cell + depth / 2,
+			}, style.materials.ceiling)
 		end
 	end
 end
@@ -282,11 +334,17 @@ end
 local function walls(parts: { Part }, layout: any, originX: number, originZ: number, style: any): ()
 	local n, cell, thickness = layout.n, layout.cell, style.wallThickness
 
+	-- A face with a template cell on either side is the model's own shell: the
+	-- template authors perimeter walls inside its footprint (task 0038).
 	for i = 1, n do
 		local j = 1
 		while j <= n do
 			local startIndex = idx(layout, i, j)
-			if not layout.sealedE[startIndex] then
+			if
+				not layout.sealedE[startIndex]
+				or reserved(layout, i, j)
+				or reserved(layout, i + 1, j)
+			then
 				j += 1
 				continue
 			end
@@ -294,7 +352,11 @@ local function walls(parts: { Part }, layout: any, originX: number, originZ: num
 			local start = j
 			while j + 1 <= n do
 				local nextIndex = idx(layout, i, j + 1)
-				if not layout.sealedE[nextIndex] then
+				if
+					not layout.sealedE[nextIndex]
+					or reserved(layout, i, j + 1)
+					or reserved(layout, i + 1, j + 1)
+				then
 					break
 				end
 				local nextBottom, nextTop = wallSpanE(layout, i, j + 1)
@@ -318,7 +380,11 @@ local function walls(parts: { Part }, layout: any, originX: number, originZ: num
 		local i = 1
 		while i <= n do
 			local startIndex = idx(layout, i, j)
-			if not layout.sealedS[startIndex] then
+			if
+				not layout.sealedS[startIndex]
+				or reserved(layout, i, j)
+				or reserved(layout, i, j + 1)
+			then
 				i += 1
 				continue
 			end
@@ -326,7 +392,11 @@ local function walls(parts: { Part }, layout: any, originX: number, originZ: num
 			local start = i
 			while i + 1 <= n do
 				local nextIndex = idx(layout, i + 1, j)
-				if not layout.sealedS[nextIndex] then
+				if
+					not layout.sealedS[nextIndex]
+					or reserved(layout, i + 1, j)
+					or reserved(layout, i + 1, j + 1)
+				then
 					break
 				end
 				local nextBottom, nextTop = wallSpanS(layout, i + 1, j)
@@ -389,6 +459,8 @@ local function soffits(
 			if
 				layout.sealedE[index]
 				or layout.hangE[index]
+				or reserved(layout, i, j)
+				or reserved(layout, i + 1, j)
 				or own == other
 				or own == 0
 				or other == 0
@@ -403,6 +475,8 @@ local function soffits(
 				local nextIndex = idx(layout, i, j + 1)
 				if
 					layout.sealedE[nextIndex]
+					or reserved(layout, i, j + 1)
+					or reserved(layout, i + 1, j + 1)
 					or nextOwn == nextOther
 					or nextOwn == 0
 					or nextOther == 0
@@ -432,6 +506,8 @@ local function soffits(
 			if
 				layout.sealedS[index]
 				or layout.hangS[index]
+				or reserved(layout, i, j)
+				or reserved(layout, i, j + 1)
 				or own == other
 				or own == 0
 				or other == 0
@@ -446,6 +522,8 @@ local function soffits(
 				local nextIndex = idx(layout, i + 1, j)
 				if
 					layout.sealedS[nextIndex]
+					or reserved(layout, i + 1, j)
+					or reserved(layout, i + 1, j + 1)
 					or nextOwn == nextOther
 					or nextOwn == 0
 					or nextOther == 0
@@ -484,7 +562,7 @@ local function columns(
 	for j = 1, n do
 		for i = 1, n do
 			local index = idx(layout, i, j)
-			if layout.column[index] then
+			if layout.column[index] and not layout.templateCell[index] then
 				local level = floorAt(layout, i, j)
 				local height = layout.height[index]
 				add(parts, "column", ownerOf(layout), { col, height, col }, {
@@ -512,7 +590,11 @@ local function hangWalls(
 		local j = 1
 		while j <= n do
 			local startIndex = idx(layout, i, j)
-			if not layout.hangE[startIndex] then
+			if
+				not layout.hangE[startIndex]
+				or reserved(layout, i, j)
+				or reserved(layout, i + 1, j)
+			then
 				j += 1
 				continue
 			end
@@ -521,7 +603,11 @@ local function hangWalls(
 			local start = j
 			while j + 1 <= n do
 				local nextIndex = idx(layout, i, j + 1)
-				if not layout.hangE[nextIndex] then
+				if
+					not layout.hangE[nextIndex]
+					or reserved(layout, i, j + 1)
+					or reserved(layout, i + 1, j + 1)
+				then
 					break
 				end
 				local nextTop = select(2, wallSpanE(layout, i, j + 1))
@@ -545,7 +631,11 @@ local function hangWalls(
 		local i = 1
 		while i <= n do
 			local startIndex = idx(layout, i, j)
-			if not layout.hangS[startIndex] then
+			if
+				not layout.hangS[startIndex]
+				or reserved(layout, i, j)
+				or reserved(layout, i, j + 1)
+			then
 				i += 1
 				continue
 			end
@@ -554,7 +644,11 @@ local function hangWalls(
 			local start = i
 			while i + 1 <= n do
 				local nextIndex = idx(layout, i + 1, j)
-				if not layout.hangS[nextIndex] then
+				if
+					not layout.hangS[nextIndex]
+					or reserved(layout, i + 1, j)
+					or reserved(layout, i + 1, j + 1)
+				then
 					break
 				end
 				local nextTop = select(2, wallSpanS(layout, i + 1, j))
@@ -604,7 +698,12 @@ local function steps(parts: { Part }, layout: any, originX: number, originZ: num
 	local n, cell = layout.n, layout.cell
 	for i = 1, n do
 		for j = 1, n do
-			if i < n and not layout.sealedE[idx(layout, i, j)] then
+			if
+				i < n
+				and not layout.sealedE[idx(layout, i, j)]
+				and not reserved(layout, i, j)
+				and not reserved(layout, i + 1, j)
+			then
 				local low = math.min(floorAt(layout, i, j), floorAt(layout, i + 1, j))
 				local high = math.max(floorAt(layout, i, j), floorAt(layout, i + 1, j))
 				if high - low == 1 then
@@ -625,7 +724,12 @@ local function steps(parts: { Part }, layout: any, originX: number, originZ: num
 					)
 				end
 			end
-			if j < n and not layout.sealedS[idx(layout, i, j)] then
+			if
+				j < n
+				and not layout.sealedS[idx(layout, i, j)]
+				and not reserved(layout, i, j)
+				and not reserved(layout, i, j + 1)
+			then
 				local low = math.min(floorAt(layout, i, j), floorAt(layout, i, j + 1))
 				local high = math.max(floorAt(layout, i, j), floorAt(layout, i, j + 1))
 				if high - low == 1 then
@@ -732,10 +836,16 @@ local function details(
 	end
 end
 
--- Debug only (task 0036): a flat pad over a reserved template footprint, so
--- placement is visible before any set-piece model exists. Production emits
--- nothing, which is why the pinned geometry fingerprint does not move.
-local function templates(
+-- A template is a clone order, not geometry. The renderer emits one spec per
+-- descriptor carrying the asset id; `Build.apply` clones that model from
+-- `ServerStorage.Assets.Templates` instead of building a box (task 0038). The
+-- position is the footprint's minimum corner on the floor plane, which is where
+-- the model's `WorldPivot` is authored, so the clone needs no further maths.
+-- `size` is advisory: the model carries its own dimensions.
+--
+-- M19 takes over how and when this is applied (streaming, unloading, yaw and
+-- opening choice); this module only states the order.
+local function templateModels(
 	parts: { Part },
 	layout: any,
 	originX: number,
@@ -749,6 +859,36 @@ local function templates(
 		add(
 			parts,
 			"template",
+			"template:" .. template.ref,
+			{ template.w * cell, 0, template.d * cell },
+			{
+				originX + (template.cellX - 1) * cell,
+				level,
+				originZ + (template.cellZ - 1) * cell,
+			},
+			style.materials.ceiling,
+			{ template = template.modelId }
+		)
+	end
+end
+
+-- Debug only (task 0036): a flat pad over a reserved template footprint, so
+-- placement is visible on its own. Production emits the clone order instead, so
+-- the marker never reaches a geometry fingerprint.
+local function templateMarkers(
+	parts: { Part },
+	layout: any,
+	originX: number,
+	originZ: number,
+	style: any
+): ()
+	local cell = layout.cell
+	for _, template in ipairs(layout.templates) do
+		local index = idx(layout, template.cellX, template.cellZ)
+		local level = layout.floorY[index] or 0
+		add(
+			parts,
+			"templateMarker",
 			"template:" .. template.ref,
 			{ template.w * cell, 0.2, template.d * cell },
 			{ originX + template.x, level + 0.1, originZ + template.z },
@@ -773,12 +913,13 @@ function ChunkRenderer.describe(layout: any, options: any?): { Part }
 	columns(parts, layout, originX, originZ, style)
 	ramps(parts, layout, originX, originZ, style)
 	steps(parts, layout, originX, originZ, style)
+	templateModels(parts, layout, originX, originZ, style)
 	if options ~= nil and options.enclosure == "perimeter" then
 		perimeter(parts, layout, originX, originZ, style, options.worldChunks)
 	end
 	if debug then
 		details(parts, layout, originX, originZ, style)
-		templates(parts, layout, originX, originZ, style)
+		templateMarkers(parts, layout, originX, originZ, style)
 	end
 
 	if #parts > style.budget then

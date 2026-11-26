@@ -12,8 +12,9 @@
 -- a raster scan starting at (1,1) would fill first.
 --
 -- Placement is chunk-local: a chunk only knows the templates it placed itself,
--- which is what keeps chunk generation order-independent. Model insertion is a
--- follow-up (the descriptor reserves ground, nothing is built yet).
+-- which is what keeps chunk generation order-independent. The descriptor carries
+-- the asset id; `ChunkRenderer` turns it into a clone order and `Build.apply`
+-- clones the model (task 0038). Chunk-manager integration is M19.
 
 local Common = if script ~= nil then require(script.Parent.Common) else require("./Common")
 local Layout = if script ~= nil
@@ -28,6 +29,21 @@ local DEFAULTS = {
 	count = 1,
 	spacing = 0,
 }
+
+-- A level names a `ref`; the asset carries a stable `noclipTemplateId`. The two
+-- are mapped explicitly, not by a string convention, so an id that does not
+-- derive from its ref still resolves (`20-assets/templates/contract.md`).
+local MODELS: { [string]: string } = {
+	manila = "manila_room",
+	stairwell = "stairwell_mezzanine",
+	sunken = "sunken_pool",
+}
+
+-- The model id for a config ref. An unmapped ref is its own id, so a template
+-- named like its ref needs no table row.
+function Template.modelId(ref: string): string
+	return MODELS[ref] or ref
+end
 
 -- Whether the config asks for any template, so the pass can be skipped cheaply.
 function Template.enabled(make: any): boolean
@@ -155,6 +171,7 @@ function Template.apply(make: any, layout: any): ()
 				end
 				table.insert(layout.templates, {
 					ref = spec.ref,
+					modelId = Template.modelId(spec.ref),
 					cellX = i,
 					cellZ = j,
 					w = w,

@@ -236,27 +236,27 @@ gcLgc4RKxr21zq2UlJSM]]></BinaryString>
 		<Item class="Camera" referent="RBX7bca6100f2a2471f8bcf4178316af70e">
 			<Properties>
 				<CoordinateFrame name="CFrame">
-					<X>0</X>
-					<Y>6.5</Y>
-					<Z>-300</Z>
-					<R00>-0.997267485</R00>
-					<R01>0.000102629681</R01>
-					<R02>-0.073876746</R02>
-					<R10>-7.27595848e-12</R10>
-					<R11>0.999999106</R11>
-					<R12>0.00138919998</R12>
-					<R20>0.073876828</R20>
-					<R21>0.00138540403</R21>
-					<R22>-0.997266412</R22>
+					<X>815.511719</X>
+					<Y>4.60165882</Y>
+					<Z>462.53183</Z>
+					<R00>-0.111507803</R00>
+					<R01>-0.0456928052</R01>
+					<R02>-0.992712557</R02>
+					<R10>-0</R10>
+					<R11>0.998942435</R11>
+					<R12>-0.045979552</R12>
+					<R20>0.993763626</R20>
+					<R21>-0.00512707885</R21>
+					<R22>-0.111389861</R22>
 				</CoordinateFrame>
 				<Ref name="CameraSubject">null</Ref>
 				<token name="CameraType">0</token>
 				<float name="FieldOfView">84.9999924</float>
 				<token name="FieldOfViewMode">0</token>
 				<CoordinateFrame name="Focus">
-					<X>24</X>
-					<Y>6.04869699</Y>
-					<Z>23.9773636</Z>
+					<X>817.497131</X>
+					<Y>4.69361734</Y>
+					<Z>462.754608</Z>
 					<R00>1</R00>
 					<R01>0</R01>
 					<R02>0</R02>
@@ -50682,9 +50682,11 @@ export type Detail = {
 }
 
 -- An authored set piece reserved on the grid. `cellX`/`cellZ` is the
--- north-west cell of the footprint; `x`/`z` is its centre in chunk-local studs.
+-- north-west cell of the footprint; `x`/`z` is its centre in chunk-local studs;
+-- `modelId` is the asset's `noclipTemplateId` (see 20-assets/templates).
 export type Template = {
 	ref: string,
+	modelId: string,
 	cellX: number,
 	cellZ: number,
 	w: number,
@@ -50873,6 +50875,9 @@ type Part = {
 	canCollide: boolean,
 	tag: string?,
 	wedge: boolean?,
+	-- A clone order, not a box: `Build.apply` clones this asset id instead of
+	-- creating a part (task 0038).
+	template: string?,
 }
 
 local DEFAULTS = {
@@ -50941,6 +50946,15 @@ local function idx(layout: any, i: number, j: number): number
 	return LayoutModule.index(layout.n, i, j)
 end
 
+-- A cell reserved by a template footprint (task 0036). Out-of-chunk cells are
+-- never reserved: a chunk only knows the templates it placed itself.
+local function reserved(layout: any, i: number, j: number): boolean
+	if i < 1 or j < 1 or i > layout.n or j > layout.n then
+		return false
+	end
+	return layout.templateCell[idx(layout, i, j)] == true
+end
+
 local function floorAt(layout: any, i: number, j: number): number
 	return layout.floorY[idx(layout, i, j)] or 0
 end
@@ -50954,7 +50968,7 @@ local function ownerOf(layout: any): string
 end
 
 -- Floors: greedy rectangle merge per height level, skipping ramp cells (the
--- wedge replaces the floor there).
+-- wedge replaces the floor there) and template cells (the model owns its floor).
 local function floors(
 	parts: { Part },
 	layout: any,
@@ -50967,7 +50981,7 @@ local function floors(
 	for j = 1, n do
 		for i = 1, n do
 			local startIndex = idx(layout, i, j)
-			if taken[startIndex] or layout.ramp[startIndex] ~= nil then
+			if taken[startIndex] or layout.ramp[startIndex] ~= nil or reserved(layout, i, j) then
 				continue
 			end
 			local level = floorAt(layout, i, j)
@@ -50977,6 +50991,7 @@ local function floors(
 				if
 					taken[nextIndex]
 					or layout.ramp[nextIndex] ~= nil
+					or reserved(layout, iEnd + 1, j)
 					or floorAt(layout, iEnd + 1, j) ~= level
 				then
 					break
@@ -50991,6 +51006,7 @@ local function floors(
 					if
 						taken[nextIndex]
 						or layout.ramp[nextIndex] ~= nil
+						or reserved(layout, k, jEnd + 1)
 						or floorAt(layout, k, jEnd + 1) ~= level
 					then
 						canGrow = false
@@ -51017,6 +51033,35 @@ local function floors(
 	end
 end
 
+-- Ceilings stay one slab per band because each cell's own band hides the higher
+-- bands above it. A template footprint cuts a hole in its band: the model owns
+-- its own ceiling, and two coplanar slabs would z-fight (template contract,
+-- "Floor plane"). With no template in the chunk this emits exactly the same
+-- single slab per band as before.
+local function cutRect(rect: { number }, hole: { number }): { { number } }
+	local i0 = math.max(rect[1], hole[1])
+	local i1 = math.min(rect[3], hole[3])
+	local j0 = math.max(rect[2], hole[2])
+	local j1 = math.min(rect[4], hole[4])
+	if i0 > i1 or j0 > j1 then
+		return { rect }
+	end
+	local out = {}
+	if rect[2] < j0 then
+		table.insert(out, { rect[1], rect[2], rect[3], j0 - 1 })
+	end
+	if rect[4] > j1 then
+		table.insert(out, { rect[1], j1 + 1, rect[3], rect[4] })
+	end
+	if rect[1] < i0 then
+		table.insert(out, { rect[1], j0, i0 - 1, j1 })
+	end
+	if rect[3] > i1 then
+		table.insert(out, { i1 + 1, j0, rect[3], j1 })
+	end
+	return out
+end
+
 local function ceilings(
 	parts: { Part },
 	layout: any,
@@ -51024,23 +51069,51 @@ local function ceilings(
 	originZ: number,
 	style: any
 ): ()
-	local span = layout.n * layout.cell
-	local cx = originX + span / 2
-	local cz = originZ + span / 2
+	local n, cell = layout.n, layout.cell
 	local seen: { [number]: boolean } = {}
-	for j = 1, layout.n do
-		for i = 1, layout.n do
+	for j = 1, n do
+		for i = 1, n do
+			local index = idx(layout, i, j)
 			local level = ceilingAt(layout, i, j)
-			if level > 0 and not seen[level] then
+			if level > 0 and not seen[level] and not layout.templateCell[index] then
 				seen[level] = true
-				add(
-					parts,
-					"ceiling",
-					ownerOf(layout),
-					{ span, CEILING_THICKNESS, span },
-					{ cx, level + CEILING_THICKNESS / 2, cz },
-					style.materials.ceiling
-				)
+				local rects: { { number } } = { { 1, 1, n, n } }
+				for _, template in ipairs(layout.templates) do
+					-- Only cut the footprint out of a band it actually occupies; a
+					-- sunken template's lower bands are the template's own business.
+					local touches = false
+					for jj = template.cellZ, template.cellZ + template.d - 1 do
+						for ii = template.cellX, template.cellX + template.w - 1 do
+							if ceilingAt(layout, ii, jj) == level then
+								touches = true
+							end
+						end
+					end
+					if touches then
+						local hole = {
+							template.cellX,
+							template.cellZ,
+							template.cellX + template.w - 1,
+							template.cellZ + template.d - 1,
+						}
+						local pieces: { { number } } = {}
+						for _, rect in ipairs(rects) do
+							for _, piece in ipairs(cutRect(rect, hole)) do
+								table.insert(pieces, piece)
+							end
+						end
+						rects = pieces
+					end
+				end
+				for _, rect in ipairs(rects) do
+					local width = (rect[3] - rect[1] + 1) * cell
+					local depth = (rect[4] - rect[2] + 1) * cell
+					add(parts, "ceiling", ownerOf(layout), { width, CEILING_THICKNESS, depth }, {
+						originX + (rect[1] - 1) * cell + width / 2,
+						level + CEILING_THICKNESS / 2,
+						originZ + (rect[2] - 1) * cell + depth / 2,
+					}, style.materials.ceiling)
+				end
 			end
 		end
 	end
@@ -51119,11 +51192,17 @@ end
 local function walls(parts: { Part }, layout: any, originX: number, originZ: number, style: any): ()
 	local n, cell, thickness = layout.n, layout.cell, style.wallThickness
 
+	-- A face with a template cell on either side is the model's own shell: the
+	-- template authors perimeter walls inside its footprint (task 0038).
 	for i = 1, n do
 		local j = 1
 		while j <= n do
 			local startIndex = idx(layout, i, j)
-			if not layout.sealedE[startIndex] then
+			if
+				not layout.sealedE[startIndex]
+				or reserved(layout, i, j)
+				or reserved(layout, i + 1, j)
+			then
 				j += 1
 				continue
 			end
@@ -51131,7 +51210,11 @@ local function walls(parts: { Part }, layout: any, originX: number, originZ: num
 			local start = j
 			while j + 1 <= n do
 				local nextIndex = idx(layout, i, j + 1)
-				if not layout.sealedE[nextIndex] then
+				if
+					not layout.sealedE[nextIndex]
+					or reserved(layout, i, j + 1)
+					or reserved(layout, i + 1, j + 1)
+				then
 					break
 				end
 				local nextBottom, nextTop = wallSpanE(layout, i, j + 1)
@@ -51155,7 +51238,11 @@ local function walls(parts: { Part }, layout: any, originX: number, originZ: num
 		local i = 1
 		while i <= n do
 			local startIndex = idx(layout, i, j)
-			if not layout.sealedS[startIndex] then
+			if
+				not layout.sealedS[startIndex]
+				or reserved(layout, i, j)
+				or reserved(layout, i, j + 1)
+			then
 				i += 1
 				continue
 			end
@@ -51163,7 +51250,11 @@ local function walls(parts: { Part }, layout: any, originX: number, originZ: num
 			local start = i
 			while i + 1 <= n do
 				local nextIndex = idx(layout, i + 1, j)
-				if not layout.sealedS[nextIndex] then
+				if
+					not layout.sealedS[nextIndex]
+					or reserved(layout, i + 1, j)
+					or reserved(layout, i + 1, j + 1)
+				then
 					break
 				end
 				local nextBottom, nextTop = wallSpanS(layout, i + 1, j)
@@ -51226,6 +51317,8 @@ local function soffits(
 			if
 				layout.sealedE[index]
 				or layout.hangE[index]
+				or reserved(layout, i, j)
+				or reserved(layout, i + 1, j)
 				or own == other
 				or own == 0
 				or other == 0
@@ -51240,6 +51333,8 @@ local function soffits(
 				local nextIndex = idx(layout, i, j + 1)
 				if
 					layout.sealedE[nextIndex]
+					or reserved(layout, i, j + 1)
+					or reserved(layout, i + 1, j + 1)
 					or nextOwn == nextOther
 					or nextOwn == 0
 					or nextOther == 0
@@ -51269,6 +51364,8 @@ local function soffits(
 			if
 				layout.sealedS[index]
 				or layout.hangS[index]
+				or reserved(layout, i, j)
+				or reserved(layout, i, j + 1)
 				or own == other
 				or own == 0
 				or other == 0
@@ -51283,6 +51380,8 @@ local function soffits(
 				local nextIndex = idx(layout, i + 1, j)
 				if
 					layout.sealedS[nextIndex]
+					or reserved(layout, i + 1, j)
+					or reserved(layout, i + 1, j + 1)
 					or nextOwn == nextOther
 					or nextOwn == 0
 					or nextOther == 0
@@ -51321,7 +51420,7 @@ local function columns(
 	for j = 1, n do
 		for i = 1, n do
 			local index = idx(layout, i, j)
-			if layout.column[index] then
+			if layout.column[index] and not layout.templateCell[index] then
 				local level = floorAt(layout, i, j)
 				local height = layout.height[index]
 				add(parts, "column", ownerOf(layout), { col, height, col }, {
@@ -51349,7 +51448,11 @@ local function hangWalls(
 		local j = 1
 		while j <= n do
 			local startIndex = idx(layout, i, j)
-			if not layout.hangE[startIndex] then
+			if
+				not layout.hangE[startIndex]
+				or reserved(layout, i, j)
+				or reserved(layout, i + 1, j)
+			then
 				j += 1
 				continue
 			end
@@ -51358,7 +51461,11 @@ local function hangWalls(
 			local start = j
 			while j + 1 <= n do
 				local nextIndex = idx(layout, i, j + 1)
-				if not layout.hangE[nextIndex] then
+				if
+					not layout.hangE[nextIndex]
+					or reserved(layout, i, j + 1)
+					or reserved(layout, i + 1, j + 1)
+				then
 					break
 				end
 				local nextTop = select(2, wallSpanE(layout, i, j + 1))
@@ -51382,7 +51489,11 @@ local function hangWalls(
 		local i = 1
 		while i <= n do
 			local startIndex = idx(layout, i, j)
-			if not layout.hangS[startIndex] then
+			if
+				not layout.hangS[startIndex]
+				or reserved(layout, i, j)
+				or reserved(layout, i, j + 1)
+			then
 				i += 1
 				continue
 			end
@@ -51391,7 +51502,11 @@ local function hangWalls(
 			local start = i
 			while i + 1 <= n do
 				local nextIndex = idx(layout, i + 1, j)
-				if not layout.hangS[nextIndex] then
+				if
+					not layout.hangS[nextIndex]
+					or reserved(layout, i + 1, j)
+					or reserved(layout, i + 1, j + 1)
+				then
 					break
 				end
 				local nextTop = select(2, wallSpanS(layout, i + 1, j))
@@ -51441,7 +51556,12 @@ local function steps(parts: { Part }, layout: any, originX: number, originZ: num
 	local n, cell = layout.n, layout.cell
 	for i = 1, n do
 		for j = 1, n do
-			if i < n and not layout.sealedE[idx(layout, i, j)] then
+			if
+				i < n
+				and not layout.sealedE[idx(layout, i, j)]
+				and not reserved(layout, i, j)
+				and not reserved(layout, i + 1, j)
+			then
 				local low = math.min(floorAt(layout, i, j), floorAt(layout, i + 1, j))
 				local high = math.max(floorAt(layout, i, j), floorAt(layout, i + 1, j))
 				if high - low == 1 then
@@ -51462,7 +51582,12 @@ local function steps(parts: { Part }, layout: any, originX: number, originZ: num
 					)
 				end
 			end
-			if j < n and not layout.sealedS[idx(layout, i, j)] then
+			if
+				j < n
+				and not layout.sealedS[idx(layout, i, j)]
+				and not reserved(layout, i, j)
+				and not reserved(layout, i, j + 1)
+			then
 				local low = math.min(floorAt(layout, i, j), floorAt(layout, i, j + 1))
 				local high = math.max(floorAt(layout, i, j), floorAt(layout, i, j + 1))
 				if high - low == 1 then
@@ -51569,10 +51694,16 @@ local function details(
 	end
 end
 
--- Debug only (task 0036): a flat pad over a reserved template footprint, so
--- placement is visible before any set-piece model exists. Production emits
--- nothing, which is why the pinned geometry fingerprint does not move.
-local function templates(
+-- A template is a clone order, not geometry. The renderer emits one spec per
+-- descriptor carrying the asset id; `Build.apply` clones that model from
+-- `ServerStorage.Assets.Templates` instead of building a box (task 0038). The
+-- position is the footprint's minimum corner on the floor plane, which is where
+-- the model's `WorldPivot` is authored, so the clone needs no further maths.
+-- `size` is advisory: the model carries its own dimensions.
+--
+-- M19 takes over how and when this is applied (streaming, unloading, yaw and
+-- opening choice); this module only states the order.
+local function templateModels(
 	parts: { Part },
 	layout: any,
 	originX: number,
@@ -51586,6 +51717,36 @@ local function templates(
 		add(
 			parts,
 			"template",
+			"template:" .. template.ref,
+			{ template.w * cell, 0, template.d * cell },
+			{
+				originX + (template.cellX - 1) * cell,
+				level,
+				originZ + (template.cellZ - 1) * cell,
+			},
+			style.materials.ceiling,
+			{ template = template.modelId }
+		)
+	end
+end
+
+-- Debug only (task 0036): a flat pad over a reserved template footprint, so
+-- placement is visible on its own. Production emits the clone order instead, so
+-- the marker never reaches a geometry fingerprint.
+local function templateMarkers(
+	parts: { Part },
+	layout: any,
+	originX: number,
+	originZ: number,
+	style: any
+): ()
+	local cell = layout.cell
+	for _, template in ipairs(layout.templates) do
+		local index = idx(layout, template.cellX, template.cellZ)
+		local level = layout.floorY[index] or 0
+		add(
+			parts,
+			"templateMarker",
 			"template:" .. template.ref,
 			{ template.w * cell, 0.2, template.d * cell },
 			{ originX + template.x, level + 0.1, originZ + template.z },
@@ -51610,12 +51771,13 @@ function ChunkRenderer.describe(layout: any, options: any?): { Part }
 	columns(parts, layout, originX, originZ, style)
 	ramps(parts, layout, originX, originZ, style)
 	steps(parts, layout, originX, originZ, style)
+	templateModels(parts, layout, originX, originZ, style)
 	if options ~= nil and options.enclosure == "perimeter" then
 		perimeter(parts, layout, originX, originZ, style, options.worldChunks)
 	end
 	if debug then
 		details(parts, layout, originX, originZ, style)
-		templates(parts, layout, originX, originZ, style)
+		templateMarkers(parts, layout, originX, originZ, style)
 	end
 
 	if #parts > style.budget then
@@ -52308,7 +52470,8 @@ local function placeDetails(make: any, layout: any): ()
 					break
 				end
 				local index = Layout.index(n, i, j)
-				if not layout.solid[index] then
+				-- A template owns its interior: procedural decor stays out (0038).
+				if not layout.solid[index] and not layout.templateCell[index] then
 					local ok = false
 					if allowed["any_open"] then
 						ok = true
@@ -53494,8 +53657,9 @@ return Features
 -- a raster scan starting at (1,1) would fill first.
 --
 -- Placement is chunk-local: a chunk only knows the templates it placed itself,
--- which is what keeps chunk generation order-independent. Model insertion is a
--- follow-up (the descriptor reserves ground, nothing is built yet).
+-- which is what keeps chunk generation order-independent. The descriptor carries
+-- the asset id; `ChunkRenderer` turns it into a clone order and `Build.apply`
+-- clones the model (task 0038). Chunk-manager integration is M19.
 
 local Common = if script ~= nil then require(script.Parent.Common) else require("./Common")
 local Layout = if script ~= nil
@@ -53510,6 +53674,21 @@ local DEFAULTS = {
 	count = 1,
 	spacing = 0,
 }
+
+-- A level names a `ref`; the asset carries a stable `noclipTemplateId`. The two
+-- are mapped explicitly, not by a string convention, so an id that does not
+-- derive from its ref still resolves (`20-assets/templates/contract.md`).
+local MODELS: { [string]: string } = {
+	manila = "manila_room",
+	stairwell = "stairwell_mezzanine",
+	sunken = "sunken_pool",
+}
+
+-- The model id for a config ref. An unmapped ref is its own id, so a template
+-- named like its ref needs no table row.
+function Template.modelId(ref: string): string
+	return MODELS[ref] or ref
+end
 
 -- Whether the config asks for any template, so the pass can be skipped cheaply.
 function Template.enabled(make: any): boolean
@@ -53583,7 +53762,14 @@ local function gapBetween(
 	return math.max(0, math.max(gapX, gapZ))
 end
 
-local function spaced(layout: any, i: number, j: number, w: number, d: number, spacing: number): boolean
+local function spaced(
+	layout: any,
+	i: number,
+	j: number,
+	w: number,
+	d: number,
+	spacing: number
+): boolean
 	if spacing <= 0 then
 		return true
 	end
@@ -53630,6 +53816,7 @@ function Template.apply(make: any, layout: any): ()
 				end
 				table.insert(layout.templates, {
 					ref = spec.ref,
+					modelId = Template.modelId(spec.ref),
 					cellX = i,
 					cellZ = j,
 					w = w,
@@ -54110,8 +54297,14 @@ print(string.format("[noclip] boot ok - %s v%s", NoclipConfig.name, NoclipConfig
 --
 -- QA rule (ADR 0011): a non-debug apply refuses to create any part tagged `qa`.
 -- That guard exists so debug markers cannot ship by accident.
+--
+-- A template spec (`spec.template`) is a clone order, not a box: the model is
+-- authored once in `ServerStorage.Assets.Templates` and cloned at the footprint
+-- (task 0038). M19 owns when that happens (streaming, unloading, yaw and the
+-- doorway cut); this hook only applies one order.
 
 local CollectionService = game:GetService("CollectionService")
+local ServerStorage = game:GetService("ServerStorage")
 
 local Build = {}
 
@@ -54129,6 +54322,62 @@ local function materialOf(name: string): Enum.Material
 		return material
 	end
 	return Enum.Material.SmoothPlastic
+end
+
+-- A template is resolved by `noclipTemplateId`, not by `Name`: the name carries
+-- the variant (`setpiece_manila_room_a`), the attribute carries the id a level
+-- names (`20-assets/templates/contract.md`). An exact-name child still wins, so
+-- an asset renamed to its id keeps working.
+local function findTemplate(id: string): Instance?
+	local assets = ServerStorage:FindFirstChild("Assets")
+	if assets == nil then
+		return nil
+	end
+	local templates = assets:FindFirstChild("Templates")
+	if templates == nil then
+		return nil
+	end
+	local direct = templates:FindFirstChild(id)
+	if direct ~= nil and direct:IsA("Model") then
+		return direct
+	end
+	for _, child in ipairs(templates:GetChildren()) do
+		if child:IsA("Model") and child:GetAttribute("noclipTemplateId") == id then
+			return child
+		end
+	end
+	return nil
+end
+
+-- Clone one authored set piece and pivot its footprint corner onto the spec
+-- position. Attributes and tags come with the clone; `PrimaryPart` is left
+-- unset because the model's `WorldPivot` is the contract's pivot.
+local function applyTemplate(spec: any, parent: Folder): ()
+	if type(spec.template) ~= "string" or spec.template == "" then
+		error("Build.apply: template spec has no asset id", 3)
+	end
+	local source = findTemplate(spec.template)
+	if source == nil then
+		error(
+			string.format(
+				"Build.apply: no template model for id %q in ServerStorage.Assets.Templates",
+				spec.template
+			),
+			3
+		)
+	end
+	local model = source:Clone() :: Model
+	for _, descendant in ipairs(model:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			descendant.Anchored = true
+		end
+	end
+	local cframe = CFrame.new(toVector(spec.position))
+	if spec.yaw ~= nil and spec.yaw ~= 0 then
+		cframe = cframe * CFrame.Angles(0, math.rad(spec.yaw * 90), 0)
+	end
+	model:PivotTo(cframe)
+	model.Parent = parent
 end
 
 function Build.clear(): ()
@@ -54161,6 +54410,11 @@ function Build.apply(parts: { any }, options: any?): Folder
 	folder.Name = FOLDER_NAME
 
 	for _, spec in ipairs(parts) do
+		if spec.template ~= nil then
+			applyTemplate(spec, folder)
+			continue
+		end
+
 		-- Ramps are true wedges (ADR 0029), not tilted boxes.
 		local part = Instance.new(if spec.wedge == true then "WedgePart" else "Part")
 		part.Name = tostring(spec.owner) .. "_" .. tostring(spec.kind)

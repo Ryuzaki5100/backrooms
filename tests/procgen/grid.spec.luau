@@ -22,7 +22,7 @@ H.test("layout indexing is row-major", function()
 	H.eq(ChunkLayout.get(layout, 1, 1), false, "new cells are open")
 end)
 
-H.test("a chunk is one floor and one ceiling per height band", function()
+H.test("a chunk is one floor and merged ceilings per height level", function()
 	local layout = empty(6, 16)
 	layout.height[ChunkLayout.index(6, 1, 1)] = 14
 	layout.height[ChunkLayout.index(6, 2, 1)] = 10
@@ -36,7 +36,9 @@ H.test("a chunk is one floor and one ceiling per height band", function()
 		end
 	end
 	H.eq(floors, 1, "one floor slab per chunk")
-	H.eq(ceilings, 3, "one ceiling per distinct height (10, 12, 14)")
+	-- Ceilings merge per level: the 12-stud cells form an L around the 10 and 14
+	-- cells, so that level takes two rectangles (task 0003).
+	H.eq(ceilings, 4, "one merged ceiling per height run (14, 10, and 12 in two)")
 end)
 
 H.test("a run of sealed faces becomes one wall part", function()
@@ -218,4 +220,55 @@ H.test("a one-stud rise gets a step, not a ramp", function()
 	-- A one-cell plateau has four edges, so four steps.
 	H.eq(steps, 4, "one step per edge of the raised cell")
 	H.eq(ramps, 0, "no ramp for a step")
+end)
+
+H.test("a ceiling part only covers cells at its own level", function()
+	local n, cell = 6, 16
+	local layout = empty(n, cell)
+	-- A tall block in one corner, a low strip along one edge, a raised cell, and
+	-- a template cell that no ceiling may cover.
+	for j = 1, 3 do
+		for i = 1, 3 do
+			layout.height[ChunkLayout.index(n, i, j)] = 20
+		end
+	end
+	for i = 4, n do
+		layout.height[ChunkLayout.index(n, i, n)] = 8
+	end
+	layout.floorY[ChunkLayout.index(n, 5, 2)] = 2
+	layout.templateCell[ChunkLayout.index(n, 6, 2)] = true
+
+	local parts = ChunkRenderer.describe(layout, { style = { budget = 400 } })
+	local seen: { [number]: boolean } = {}
+	local ceilings, covered = 0, 0
+	for _, part in ipairs(parts) do
+		if part.kind == "ceiling" then
+			ceilings += 1
+			local bottom = part.position[2] - part.size[2] / 2
+			local i0 = math.floor((part.position[1] - part.size[1] / 2) / cell + 0.5) + 1
+			local i1 = i0 + math.floor(part.size[1] / cell + 0.5) - 1
+			local j0 = math.floor((part.position[3] - part.size[3] / 2) / cell + 0.5) + 1
+			local j1 = j0 + math.floor(part.size[3] / cell + 0.5) - 1
+			for j = j0, j1 do
+				for i = i0, i1 do
+					local index = ChunkLayout.index(n, i, j)
+					H.eq(
+						layout.templateCell[index] == true,
+						false,
+						"no ceiling over a template cell"
+					)
+					H.eq(
+						(layout.floorY[index] or 0) + layout.height[index],
+						bottom,
+						"cell " .. i .. "," .. j .. " sits at the ceiling's level"
+					)
+					H.eq(seen[index] == true, false, "each cell is under one ceiling")
+					seen[index] = true
+					covered += 1
+				end
+			end
+		end
+	end
+	H.eq(covered, n * n - 1, "every cell but the template cell has a ceiling")
+	H.ok(ceilings > 3, "one rectangle per level run, not one slab per band: " .. ceilings)
 end)

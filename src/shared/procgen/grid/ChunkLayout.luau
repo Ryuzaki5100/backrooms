@@ -24,9 +24,11 @@ export type Detail = {
 }
 
 -- An authored set piece reserved on the grid. `cellX`/`cellZ` is the
--- north-west cell of the footprint; `x`/`z` is its centre in chunk-local studs.
+-- north-west cell of the footprint; `x`/`z` is its centre in chunk-local studs;
+-- `modelId` is the asset's `noclipTemplateId` (see 20-assets/templates).
 export type Template = {
 	ref: string,
+	modelId: string,
 	cellX: number,
 	cellZ: number,
 	w: number,
