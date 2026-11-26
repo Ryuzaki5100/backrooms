@@ -20,5 +20,6 @@ require("./procgen/open-additive.spec")
 require("./procgen/walkgraph.spec")
 require("./procgen/closure.spec")
 require("./procgen/template.spec")
+require("./procgen/streaming.spec")
 
 process.exit(Harness.run())
