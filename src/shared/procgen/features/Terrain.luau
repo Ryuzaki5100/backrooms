@@ -19,7 +19,11 @@ local DEFAULTS = {
 	rise = 4,
 	plateauShare = 0.10,
 	sunkenShare = 0.10,
-	rampChance = 0.15,
+	rampChance = 1.0,
+	secondRampFaces = 12,
+	secondRampChance = 0.25,
+	rampSpacing = 4,
+	extraRampCells = 48,
 	stepMax = 1,
 	minHeadroom = 9,
 }
@@ -64,6 +68,30 @@ function Terrain.stepMax(make: any): number
 	return (terrain and terrain.stepMax) or DEFAULTS.stepMax
 end
 
+-- Minimum distance (Manhattan, in cells) between two ramps of one region, and
+-- the region size above which a component earns extra ramps (read by the
+-- connectivity repair too).
+function Terrain.rampSpacing(make: any): number
+	local terrain = make.params and make.params.terrain
+	return (terrain and terrain.rampSpacing) or DEFAULTS.rampSpacing
+end
+
+function Terrain.extraRampCells(make: any): number
+	local terrain = make.params and make.params.terrain
+	return (terrain and terrain.extraRampCells) or DEFAULTS.extraRampCells
+end
+
+-- Whether cell (i, j) is at least `spacing` cells (Manhattan) from every
+-- { i, j } in `others`.
+function Terrain.farFrom(others: { { number } }, i: number, j: number, spacing: number): boolean
+	for _, other in ipairs(others) do
+		if math.abs(other[1] - i) + math.abs(other[2] - j) < spacing then
+			return false
+		end
+	end
+	return true
+end
+
 -- Floor height at chunk-local cell (i, j); outside the chunk it is read from the
 -- terrain field, so a chunk border agrees with its neighbour without reading it.
 function Terrain.floorAt(make: any, layout: any, i: number, j: number): number
@@ -77,8 +105,8 @@ end
 -- The one ramp rule (ADR 0029, shared by `apply` and the connectivity repair):
 -- a ramp stands on the HIGH side of a boundary, in a cell that is free of ramp,
 -- column, template and hanging wall, and only when the plateau continues at the
--- same level on the far side (`dir` points towards the high end, so the cell
--- beyond is at +dir along `axis`). Returns whether the ramp was placed; the
+-- same level on the far side as open floor (`dir` points towards the high end,
+-- so the cell beyond is at +dir along `axis`). Returns whether the ramp was placed; the
 -- boundary face's sealed flag is the caller's business.
 function Terrain.tryRamp(
 	make: any,
@@ -112,6 +140,16 @@ function Terrain.tryRamp(
 		-- The plateau does not continue: a ramp would end in mid-air.
 		return false
 	end
+	if
+		beyondI >= 1
+		and beyondJ >= 1
+		and beyondI <= n
+		and beyondJ <= n
+		and layout.solid[Layout.index(n, beyondI, beyondJ)]
+	then
+		-- ...or in a wall: the high end must open onto floor.
+		return false
+	end
 	layout.ramp[index] = { axis = axis, dir = dir, lowY = lowY, highY = highY }
 	return true
 end
@@ -119,10 +157,33 @@ end
 -- Apply the boundary rules: a rise above one stud is a retaining edge unless a
 -- ramp can stand on the higher side and continue into the plateau. Headroom is
 -- raised wherever needed.
+--
+-- Ramps are sparse and chosen per REGION BOUNDARY, never per face (ADR 0031 D68).
+-- A terrain region is a chunk-local set of touching cells of equal floorY
+-- (partition walls do not split it: the connectivity pass opens them). Every rise above stepMax is sealed first;
+-- then for each pair (high region, adjacent lower region, or lower floor outside
+-- the chunk) the candidate faces where `tryRamp` accepts a ramp are sorted by
+-- `hash01(seed, "ramp:pick", canonical owner gx, gz)` (ties: east before south,
+-- then cell index), and the first one is opened with a ramp. A second ramp is
+-- placed only when the shared boundary has more than `secondRampFaces` faces and
+-- a hash roll is below `secondRampChance`. Every ramp of a high region stays at
+-- least `rampSpacing` cells (Manhattan) from the others in that region.
+--
+-- Params (make.params.terrain, defaults in brackets):
+--   rampChance        [1.0]  probability that a region pair gets a ramp from
+--                            this pass at all (was: per boundary face). The
+--                            connectivity repair covers anything left unjoined.
+--   secondRampFaces   [12]   boundary faces needed before a second ramp is
+--                            considered.
+--   secondRampChance  [0.25] probability of that second ramp.
+--   rampSpacing       [4]    minimum distance between ramps of one region.
 function Terrain.apply(make: any, layout: any): ()
 	local terrain = make.params.terrain or {}
 	local stepMax = terrain.stepMax or DEFAULTS.stepMax
 	local minHeadroom = terrain.minHeadroom or DEFAULTS.minHeadroom
+	local secondFaces = terrain.secondRampFaces or DEFAULTS.secondRampFaces
+	local secondChance = terrain.secondRampChance or DEFAULTS.secondRampChance
+	local spacing = Terrain.rampSpacing(make)
 	local n = layout.n
 	local originX = layout.cx * n
 	local originZ = layout.cz * n
@@ -133,70 +194,192 @@ function Terrain.apply(make: any, layout: any): ()
 
 	local rampChance = make.terrainShares and make.terrainShares.rampChance or DEFAULTS.rampChance
 
+	-- Terrain regions: equal floorY, non-solid, non-template cells that touch.
+	-- Partition walls do not split a region: `connect` opens walls between pieces
+	-- of one level, so a plateau cut into rooms still needs only one way up (a
+	-- ramp per room would put several side by side on one edge).
+	local regionOf: { [number]: number } = {}
+	local regionSize: { [number]: number } = {}
+	local regionCount = 0
+	for start = 1, n * n do
+		if
+			regionOf[start] == nil
+			and not layout.solid[start]
+			and not layout.templateCell[start]
+		then
+			regionCount += 1
+			local level = layout.floorY[start]
+			regionOf[start] = regionCount
+			regionSize[regionCount] = 1
+			local queue = { start }
+			local head = 1
+			while head <= #queue do
+				local current = queue[head]
+				head += 1
+				local ci, cj = (current - 1) % n + 1, (current - 1) // n + 1
+				for _, step in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
+					local ni, nj = ci + step[1], cj + step[2]
+					if ni >= 1 and nj >= 1 and ni <= n and nj <= n then
+						local other = Layout.index(n, ni, nj)
+						if
+							regionOf[other] == nil
+							and not layout.solid[other]
+							and not layout.templateCell[other]
+							and layout.floorY[other] == level
+						then
+							regionOf[other] = regionCount
+							regionSize[regionCount] += 1
+							table.insert(queue, other)
+						end
+					end
+				end
+			end
+		end
+	end
+
+	-- Pairs of (high region, lower side) with their candidate rise faces, in scan
+	-- order (deterministic).
+	local pairs_: { any } = {}
+	local pairByKey: { [string]: any } = {}
+
+	local function consider(i: number, j: number, axis: string, here: number, there: number)
+		local diff = there - here
+		local owner = Layout.index(n, i, j)
+		local sealedMap = if axis == "x" then layout.sealedE else layout.sealedS
+		if diff == 0 then
+			return
+		end
+		if math.abs(diff) <= stepMax then
+			sealedMap[owner] = false
+			return
+		end
+		-- A rise above stepMax is a retaining edge until a ramp opens it.
+		sealedMap[owner] = true
+		local oi = if axis == "x" then i + 1 else i
+		local oj = if axis == "z" then j + 1 else j
+		local highIsHere = diff < 0
+		local rampI = if highIsHere then i else oi
+		local rampJ = if highIsHere then j else oj
+		if rampI < 1 or rampJ < 1 or rampI > n or rampJ > n then
+			return -- the high cell is in the neighbour chunk: it decides this face
+		end
+		local highIndex = Layout.index(n, rampI, rampJ)
+		local lowI = if highIsHere then oi else i
+		local lowJ = if highIsHere then oj else j
+		local lowKey = if lowI >= 1
+				and lowJ >= 1
+				and lowI <= n
+				and lowJ <= n
+			then "r" .. (regionOf[Layout.index(n, lowI, lowJ)] or 0)
+			else "o" .. math.min(here, there)
+		local highRegion = regionOf[highIndex]
+		if highRegion == nil then
+			return -- solid or template ground: no ramp stands here
+		end
+		local key = highRegion .. ":" .. lowKey
+		local entry = pairByKey[key]
+		if entry == nil then
+			entry = { region = highRegion, faces = {} }
+			pairByKey[key] = entry
+			table.insert(pairs_, entry)
+		end
+		local gx = Common.canonical(make, originX + i - 1)
+		local gz = Common.canonical(make, originZ + j - 1)
+		table.insert(entry.faces, {
+			i = i,
+			j = j,
+			axis = axis,
+			order = if axis == "x" then 0 else 1,
+			index = owner,
+			rampI = rampI,
+			rampJ = rampJ,
+			dir = if highIsHere then -1 else 1,
+			lowY = math.min(here, there),
+			highY = math.max(here, there),
+			gx = gx,
+			gz = gz,
+			key = Common.hash01(make.seed, "ramp:pick", gx, gz),
+		})
+	end
+
 	for j = 1, n do
 		for i = 1, n do
-			local index = Layout.index(n, i, j)
-			local here = layout.floorY[index]
+			local here = layout.floorY[Layout.index(n, i, j)]
+			consider(i, j, "x", here, floorOf(i + 1, j))
+			consider(i, j, "z", here, floorOf(i, j + 1))
+		end
+	end
 
-			-- east boundary
-			local east = floorOf(i + 1, j)
-			local diff = east - here
-			if diff ~= 0 then
-				if math.abs(diff) <= stepMax then
-					layout.sealedE[index] = false
-				else
-					local highIsHere = diff < 0
-					local rampI = if highIsHere then i else i + 1
-					local chosen = Common.hash01(
-						make.seed,
-						"ramp:x",
-						Common.canonical(make, originX + i - 1),
-						Common.canonical(make, originZ + j - 1)
-					) < rampChance
-					local placed = chosen
-						and Terrain.tryRamp(
-							make,
-							layout,
-							rampI,
-							j,
-							"x",
-							if highIsHere then -1 else 1,
-							math.min(here, east),
-							math.max(here, east)
-						)
-					layout.sealedE[index] = not placed
-				end
+	-- A region takes at most round(size / extraRampCells) ramps from this pass,
+	-- and never fewer than two (one per boundary, "rarely two"), so a small
+	-- plateau ringed by several lower regions is still sparse; the repair joins
+	-- whatever the cap leaves apart.
+	local extraCells = Terrain.extraRampCells(make)
+	local placedByRegion: { [number]: { { number } } } = {}
+	for _, entry in ipairs(pairs_) do
+		table.sort(entry.faces, function(a: any, b: any): boolean
+			if a.key ~= b.key then
+				return a.key < b.key
 			end
+			if a.order ~= b.order then
+				return a.order < b.order
+			end
+			return a.index < b.index
+		end)
+	end
 
-			-- south boundary
-			local south = floorOf(i, j + 1)
-			local diffS = south - here
-			if diffS ~= 0 then
-				if math.abs(diffS) <= stepMax then
-					layout.sealedS[index] = false
-				else
-					local highIsHere = diffS < 0
-					local rampJ = if highIsHere then j else j + 1
-					local chosen = Common.hash01(
-						make.seed,
-						"ramp:z",
-						Common.canonical(make, originX + i - 1),
-						Common.canonical(make, originZ + j - 1)
-					) < rampChance
-					local placed = chosen
-						and Terrain.tryRamp(
-							make,
-							layout,
-							i,
-							rampJ,
-							"z",
-							if highIsHere then -1 else 1,
-							math.min(here, south),
-							math.max(here, south)
-						)
-					layout.sealedS[index] = not placed
-				end
+	-- Open the next acceptable face of `entry`; false when none qualifies.
+	local function place(entry: any): boolean
+		local placed = placedByRegion[entry.region]
+		if placed == nil then
+			placed = {}
+			placedByRegion[entry.region] = placed
+		end
+		local cap = math.max(2, math.floor(regionSize[entry.region] / extraCells + 0.5))
+		if #placed >= cap then
+			return false
+		end
+		for _, face in ipairs(entry.faces) do
+			if
+				Terrain.farFrom(placed, face.rampI, face.rampJ, spacing)
+				and Terrain.tryRamp(
+					make,
+					layout,
+					face.rampI,
+					face.rampJ,
+					if face.axis == "x" then "x" else "z",
+					face.dir,
+					face.lowY,
+					face.highY
+				)
+			then
+				local sealedMap = if face.axis == "x" then layout.sealedE else layout.sealedS
+				sealedMap[face.index] = false
+				table.insert(placed, { face.rampI, face.rampJ })
+				return true
 			end
+		end
+		return false
+	end
+
+	-- One ramp per region pair first, so no boundary is starved by another's
+	-- second ramp; then the rare second ramps.
+	local rolled: { any } = {}
+	for _, entry in ipairs(pairs_) do
+		local first = entry.faces[1]
+		if Common.hash01(make.seed, "ramp:pair", first.gx, first.gz) < rampChance then
+			if place(entry) then
+				table.insert(rolled, entry)
+			end
+		end
+	end
+	for _, entry in ipairs(rolled) do
+		local first = entry.faces[1]
+		if
+			#entry.faces > secondFaces
+			and Common.hash01(make.seed, "ramp:second", first.gx, first.gz) < secondChance
+		then
+			place(entry)
 		end
 	end
 

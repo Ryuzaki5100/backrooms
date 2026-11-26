@@ -371,16 +371,17 @@ local function connect(layout: any, stepMax: number): ()
 	end
 end
 
--- Repair for height-separated regions (ADR 0031 D61). A walkable component that
--- `connect` could not join is separated from the main one by a rise above
+-- Repair for height-separated regions (ADR 0031 D61, D68). A walkable component
+-- that `connect` could not join is separated from the main one by a rise above
 -- stepMax; the only legal bridge is a ramp. For each such component, candidate
 -- boundary faces (between it and a cell reachable from main, sealed, rising by
 -- more than stepMax) are sorted by a canonical hash and the first that fits the
--- Terrain ramp rule AND actually joins the component is taken. A region larger
--- than REPAIR_CELLS gets up to round(size / REPAIR_CELLS) ramps in total, so a
--- big plateau has more than one way up. Repeats until no progress. Returns the
--- number of ramps added.
-local REPAIR_CELLS = 12
+-- Terrain ramp rule AND actually joins the component is taken: one ramp per
+-- unjoined component is guaranteed. Only a component larger than
+-- `terrain.extraRampCells` (default 48) gets more, round(size / extraRampCells)
+-- in total, each at least `terrain.rampSpacing` (default 4) cells from the
+-- other ramps of the chunk. Joins one component per call and returns the number
+-- of ramps added.
 
 local function repairRamps(make: any, layout: any, stepMax: number): number
 	local n = layout.n
@@ -478,6 +479,25 @@ local function repairRamps(make: any, layout: any, stepMax: number): number
 		return false
 	end
 
+	-- The cell that carries the ramp for candidate `c` (the high side).
+	local function highOf(c: any): number
+		return if layout.floorY[c.a] > layout.floorY[c.b] then c.a else c.b
+	end
+
+	-- Whether a ramp on candidate `c` would keep `terrain.rampSpacing` cells
+	-- (Manhattan) from every ramp already in the chunk.
+	local function clearOfRamps(c: any): boolean
+		local hi, hj = cellOf(n, highOf(c))
+		local spacing = Terrain.rampSpacing(make)
+		for other in pairs(layout.ramp) do
+			local oi, oj = cellOf(n, other)
+			if math.abs(oi - hi) + math.abs(oj - hj) < spacing then
+				return false
+			end
+		end
+		return true
+	end
+
 	local function allReached(seen: { [number]: boolean }, cells: { [number]: boolean }): boolean
 		for cellIndex in pairs(cells) do
 			if not seen[cellIndex] then
@@ -487,71 +507,104 @@ local function repairRamps(make: any, layout: any, stepMax: number): number
 		return true
 	end
 
-	for _ = 1, n * n do
-		local graph = WalkGraph.build(layout, { stepMax = stepMax })
-		local comps = WalkGraph.components(graph)
-		if #comps <= 1 then
-			break
-		end
-		local main = largestComponent(comps)
-		local reach: { [number]: boolean } = {}
-		for _, cellIndex in ipairs(comps[main].cells) do
-			reach[cellIndex] = true
-		end
-		local mainRep = comps[main].cells[1]
+	local graph = WalkGraph.build(layout, { stepMax = stepMax })
+	local comps = WalkGraph.components(graph)
+	if #comps <= 1 then
+		return added
+	end
+	local main = largestComponent(comps)
+	local reach: { [number]: boolean } = {}
+	for _, cellIndex in ipairs(comps[main].cells) do
+		reach[cellIndex] = true
+	end
+	local mainRep = comps[main].cells[1]
 
-		local progress = false
-		for index, comp in ipairs(comps) do
-			if index ~= main then
-				local first = comp.cells[1]
-				local joined = false
-				-- The bridge must put this component in main's and strand nothing
-				-- main already reached.
-				for _, c in ipairs(candidates(comp.cells, reach)) do
-					if
-						tryCandidate(c, function(g: any): boolean
-							local seen = WalkGraph.reachableFrom(g, mainRep)
-							return seen[first] == true and allReached(seen, reach)
-						end)
-					then
-						joined = true
-						added += 1
-						break
+	for index, comp in ipairs(comps) do
+		if index ~= main then
+			local first = comp.cells[1]
+			local joined = false
+			local joinedHigh: number? = nil
+			-- The bridge must put this component in main's and strand nothing
+			-- main already reached.
+			-- Prefer a spot clear of every other ramp; settle for any when the
+			-- guarantee demands it. A scrap too small to be worth a ramp beside
+			-- another is left to `settlePockets`.
+			local list = candidates(comp.cells, reach)
+			local scrap = comp.size < Terrain.rampSpacing(make) ^ 2
+			for pass = 1, if scrap then 1 else 2 do
+				for _, c in ipairs(list) do
+					if pass == 2 or clearOfRamps(c) then
+						if
+							tryCandidate(c, function(g: any): boolean
+								local seen = WalkGraph.reachableFrom(g, mainRep)
+								return seen[first] == true and allReached(seen, reach)
+							end)
+						then
+							joined = true
+							joinedHigh = highOf(c)
+							added += 1
+							break
+						end
 					end
 				end
 				if joined then
-					progress = true
-					-- A big region earns more than one way in.
-					local want = math.floor(comp.size / REPAIR_CELLS + 0.5)
-					if comp.size > REPAIR_CELLS and want > 1 then
-						local together: { [number]: boolean } = {}
-						for cellIndex in pairs(reach) do
-							together[cellIndex] = true
-						end
-						for _, cellIndex in ipairs(comp.cells) do
-							together[cellIndex] = true
-						end
-						local extra = 1
-						for _, c in ipairs(candidates(comp.cells, reach)) do
-							if extra >= want then
-								break
-							end
-							if
-								tryCandidate(c, function(g: any): boolean
-									return allReached(WalkGraph.reachableFrom(g, mainRep), together)
-								end)
-							then
-								extra += 1
-								added += 1
-							end
-						end
-					end
 					break
 				end
 			end
-		end
-		if not progress then
-			break
+			if joined then
+				-- Only a big region earns more than one way in.
+				local extraCells = Terrain.extraRampCells(make)
+				local want = math.floor(comp.size / extraCells + 0.5)
+				if comp.size > extraCells and want > 1 then
+					local together: { [number]: boolean } = {}
+					for cellIndex in pairs(reach) do
+						together[cellIndex] = true
+					end
+					for _, cellIndex in ipairs(comp.cells) do
+						together[cellIndex] = true
+					end
+					-- Ramps already standing in or on this component count towards its
+					-- total.
+					local near: { { number } } = {}
+					local counted: { [number]: boolean } = {}
+					local function note(cellIndex: number): ()
+						if not counted[cellIndex] then
+							counted[cellIndex] = true
+							local ri, rj = cellOf(n, cellIndex)
+							table.insert(near, { ri, rj })
+						end
+					end
+					for _, cellIndex in ipairs(comp.cells) do
+						if layout.ramp[cellIndex] ~= nil then
+							note(cellIndex)
+						end
+					end
+					if joinedHigh ~= nil then
+						note(joinedHigh)
+					end
+					local extra = math.max(1, #near)
+					for _, c in ipairs(candidates(comp.cells, reach)) do
+						if extra >= want then
+							break
+						end
+						local hi, hj = cellOf(n, highOf(c))
+						if
+							clearOfRamps(c)
+							and tryCandidate(c, function(g: any): boolean
+								return allReached(WalkGraph.reachableFrom(g, mainRep), together)
+							end)
+						then
+							table.insert(near, { hi, hj })
+							extra += 1
+							added += 1
+						end
+					end
+				end
+				-- One component per call: the caller opens walls again before the
+				-- next, because a ramp can make a neighbouring piece reachable by
+				-- walls alone.
+				return added
+			end
 		end
 	end
 	return added
@@ -791,8 +844,18 @@ function OpenAdditive.layout(make: any, cx: number, cz: number, options: any?): 
 
 	local stepMax = Terrain.stepMax(make)
 	layout.cliffsSealed = sealOpenCliffs(layout, stepMax)
-	connect(layout, stepMax)
-	layout.rampsRepaired = repairRamps(make, layout, stepMax)
+	-- Walls first, then ramps; a ramp can enlarge the main region, so walls are
+	-- opened again until a repair adds nothing (flat worlds stop at once).
+	local repaired = 0
+	for _ = 1, n * n do
+		connect(layout, stepMax)
+		local added = repairRamps(make, layout, stepMax)
+		repaired += added
+		if added == 0 then
+			break
+		end
+	end
+	layout.rampsRepaired = repaired
 	local policy = opts.enclosedPolicy or DEFAULTS.enclosedPolicy or "solidify"
 	layout.solidified = settlePockets(make, layout, policy, stepMax)
 	placeDetails(make, layout)
