@@ -57,6 +57,65 @@ function Terrain.terrainAt(make: any, gx: number, gz: number): number
 	return 0
 end
 
+-- Largest floor difference walked without a ramp (WalkGraph and the repair
+-- pass use the same number the boundary rules do).
+function Terrain.stepMax(make: any): number
+	local terrain = make.params and make.params.terrain
+	return (terrain and terrain.stepMax) or DEFAULTS.stepMax
+end
+
+-- Floor height at chunk-local cell (i, j); outside the chunk it is read from the
+-- terrain field, so a chunk border agrees with its neighbour without reading it.
+function Terrain.floorAt(make: any, layout: any, i: number, j: number): number
+	local n = layout.n
+	if i < 1 or j < 1 or i > n or j > n then
+		return Terrain.terrainAt(make, layout.cx * n + i - 1, layout.cz * n + j - 1)
+	end
+	return layout.floorY[Layout.index(n, i, j)]
+end
+
+-- The one ramp rule (ADR 0029, shared by `apply` and the connectivity repair):
+-- a ramp stands on the HIGH side of a boundary, in a cell that is free of ramp,
+-- column, template and hanging wall, and only when the plateau continues at the
+-- same level on the far side (`dir` points towards the high end, so the cell
+-- beyond is at +dir along `axis`). Returns whether the ramp was placed; the
+-- boundary face's sealed flag is the caller's business.
+function Terrain.tryRamp(
+	make: any,
+	layout: any,
+	i: number,
+	j: number,
+	axis: string,
+	dir: number,
+	lowY: number,
+	highY: number
+): boolean
+	local n = layout.n
+	if i < 1 or j < 1 or i > n or j > n then
+		return false
+	end
+	local index = Layout.index(n, i, j)
+	if
+		layout.ramp[index] ~= nil
+		or layout.column[index]
+		or layout.templateCell[index]
+		or layout.hangE[index]
+		or layout.hangS[index]
+		or (i > 1 and layout.hangE[Layout.index(n, i - 1, j)])
+		or (j > 1 and layout.hangS[Layout.index(n, i, j - 1)])
+	then
+		return false
+	end
+	local beyondI = if axis == "x" then i + dir else i
+	local beyondJ = if axis == "z" then j + dir else j
+	if Terrain.floorAt(make, layout, beyondI, beyondJ) ~= layout.floorY[index] then
+		-- The plateau does not continue: a ramp would end in mid-air.
+		return false
+	end
+	layout.ramp[index] = { axis = axis, dir = dir, lowY = lowY, highY = highY }
+	return true
+end
+
 -- Apply the boundary rules: a rise above one stud is a retaining edge unless a
 -- ramp can stand on the higher side and continue into the plateau. Headroom is
 -- raised wherever needed.
@@ -69,29 +128,7 @@ function Terrain.apply(make: any, layout: any): ()
 	local originZ = layout.cz * n
 
 	local function floorOf(i: number, j: number): number
-		if i < 1 or j < 1 or i > n or j > n then
-			return Terrain.terrainAt(make, originX + i - 1, originZ + j - 1)
-		end
-		return layout.floorY[Layout.index(n, i, j)]
-	end
-
-	local function placeRamp(
-		i: number,
-		j: number,
-		axis: string,
-		dir: number,
-		lowY: number,
-		highY: number
-	)
-		if i < 1 or j < 1 or i > n or j > n then
-			return false
-		end
-		local index = Layout.index(n, i, j)
-		if layout.ramp[index] ~= nil then
-			return false
-		end
-		layout.ramp[index] = { axis = axis, dir = dir, lowY = lowY, highY = highY }
-		return true
+		return Terrain.floorAt(make, layout, i, j)
 	end
 
 	local rampChance = make.terrainShares and make.terrainShares.rampChance or DEFAULTS.rampChance
@@ -110,7 +147,6 @@ function Terrain.apply(make: any, layout: any): ()
 				else
 					local highIsHere = diff < 0
 					local rampI = if highIsHere then i else i + 1
-					local inward = if highIsHere then i - 1 else i + 2
 					local chosen = Common.hash01(
 						make.seed,
 						"ramp:x",
@@ -118,7 +154,9 @@ function Terrain.apply(make: any, layout: any): ()
 						Common.canonical(make, originZ + j - 1)
 					) < rampChance
 					local placed = chosen
-						and placeRamp(
+						and Terrain.tryRamp(
+							make,
+							layout,
 							rampI,
 							j,
 							"x",
@@ -126,14 +164,6 @@ function Terrain.apply(make: any, layout: any): ()
 							math.min(here, east),
 							math.max(here, east)
 						)
-					if placed then
-						local inwardFloor = floorOf(inward, j)
-						if inwardFloor ~= layout.floorY[Layout.index(n, rampI, j)] then
-							-- The plateau does not continue: a ramp would end in mid-air.
-							layout.ramp[Layout.index(n, rampI, j)] = nil
-							placed = false
-						end
-					end
 					layout.sealedE[index] = not placed
 				end
 			end
@@ -147,7 +177,6 @@ function Terrain.apply(make: any, layout: any): ()
 				else
 					local highIsHere = diffS < 0
 					local rampJ = if highIsHere then j else j + 1
-					local inward = if highIsHere then j - 1 else j + 2
 					local chosen = Common.hash01(
 						make.seed,
 						"ramp:z",
@@ -155,7 +184,9 @@ function Terrain.apply(make: any, layout: any): ()
 						Common.canonical(make, originZ + j - 1)
 					) < rampChance
 					local placed = chosen
-						and placeRamp(
+						and Terrain.tryRamp(
+							make,
+							layout,
 							i,
 							rampJ,
 							"z",
@@ -163,13 +194,6 @@ function Terrain.apply(make: any, layout: any): ()
 							math.min(here, south),
 							math.max(here, south)
 						)
-					if placed then
-						local inwardFloor = floorOf(i, inward)
-						if inwardFloor ~= layout.floorY[Layout.index(n, i, rampJ)] then
-							layout.ramp[Layout.index(n, i, rampJ)] = nil
-							placed = false
-						end
-					end
 					layout.sealedS[index] = not placed
 				end
 			end
