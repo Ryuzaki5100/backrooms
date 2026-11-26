@@ -9,8 +9,24 @@
 --
 -- Wrap-aware: a region or a sightline may cross the seam, so every neighbour
 -- lookup goes through World.wrap.
+--
+-- Regions are walk regions (ADR 0031 D60/D61): non-solid cells joined across
+-- unsealed faces whose floors meet (a step within stepMax, or a ramp end), the
+-- same edge rule as grid/WalkGraph but evaluated across chunk borders. A plateau
+-- with no ramp is therefore its own region. Unlike WalkGraph, template cells stay
+-- nodes here: a template footprint is open floor and flat worlds keep their
+-- existing region numbers.
+--
+-- reachableShare = cells in the spawn's region / all non-solid cells. The spawn is
+-- `options.spawn` ({ cellX, cellZ }, world cell coordinates as returned by the
+-- strategy's spawn()); Metrics knows no spawn of its own, so without one the
+-- largest region stands in and `reachableOrigin` says "largest". The same share
+-- for the largest region is always reported as `largestRegionShare`.
 
 local World = if script ~= nil then require(script.Parent.World) else require("./World")
+local Terrain = if script ~= nil
+	then require(script.Parent.features.Terrain)
+	else require("./features/Terrain")
 
 local Metrics = {}
 
@@ -26,6 +42,7 @@ end
 local function accessors(make: any, layouts: { [string]: any })
 	local n = make.n
 	local period = make.period
+	local stepMax = Terrain.stepMax(make)
 
 	local function chunkOf(value: number): number
 		return math.floor(World.wrap(value, period) / n)
@@ -78,7 +95,56 @@ local function accessors(make: any, layouts: { [string]: any })
 		return layout.sealedS[index] ~= true
 	end
 
-	return { solidAt = solidAt, heightAt = heightAt, faceOpen = faceOpen }
+	-- Floor Y a cell presents on a face looking `side` (+1 / -1) along `axis`;
+	-- nil for the side face of a ramp. Mirrors grid/WalkGraph.
+	local function presentedY(layout: any, index: number, axis: string, side: number): number?
+		local ramp = layout.ramp[index]
+		if ramp == nil then
+			return layout.floorY[index]
+		end
+		if ramp.axis ~= axis then
+			return nil
+		end
+		if side == ramp.dir then
+			return ramp.highY
+		end
+		return ramp.lowY
+	end
+
+	local function sameRamp(a: any, b: any): boolean
+		return a ~= nil
+			and b ~= nil
+			and a.axis == b.axis
+			and a.dir == b.dir
+			and a.lowY == b.lowY
+			and a.highY == b.highY
+	end
+
+	-- Whether the floors on both sides of the face from (gx,gz) by (dx,dz) meet.
+	-- Sealing is `faceOpen`'s business.
+	local function floorsMeet(gx: number, gz: number, dx: number, dz: number): boolean
+		local la, lb = layoutAt(gx, gz), layoutAt(gx + dx, gz + dz)
+		if la == nil or lb == nil then
+			return false
+		end
+		local ia = cellIndex(la, localOf(gx), localOf(gz))
+		local ib = cellIndex(lb, localOf(gx + dx), localOf(gz + dz))
+		local axis = if dx ~= 0 then "x" else "z"
+		local side = dx + dz
+		local ya = presentedY(la, ia, axis, side)
+		local yb = presentedY(lb, ib, axis, -side)
+		if ya == nil or yb == nil then
+			return sameRamp(la.ramp[ia], lb.ramp[ib])
+		end
+		return math.abs(ya - yb) <= stepMax
+	end
+
+	return {
+		solidAt = solidAt,
+		heightAt = heightAt,
+		faceOpen = faceOpen,
+		floorsMeet = floorsMeet,
+	}
 end
 
 local AXES = {
@@ -125,6 +191,7 @@ function Metrics.compute(make: any, layouts: { [string]: any }, options: any?): 
 	-- Components of open cells, wrap-aware.
 	local seen: { [string]: boolean } = {}
 	local regions = {}
+	local regionOf: { [string]: number } = {}
 	local function regionKey(gx: number, gz: number): string
 		return World.wrap(gx, period) .. ":" .. World.wrap(gz, period)
 	end
@@ -133,6 +200,8 @@ function Metrics.compute(make: any, layouts: { [string]: any }, options: any?): 
 			local startKey = regionKey(gx, gz)
 			if not seen[startKey] and not access.solidAt(gx, gz) then
 				seen[startKey] = true
+				local regionId = #regions + 1
+				regionOf[startKey] = regionId
 				local queue = { { gx, gz } }
 				local head = 1
 				local size = 0
@@ -148,8 +217,10 @@ function Metrics.compute(make: any, layouts: { [string]: any }, options: any?): 
 							not seen[nKey]
 							and not access.solidAt(nx, nz)
 							and access.faceOpen(cellX, cellZ, axis[3])
+							and access.floorsMeet(cellX, cellZ, axis[1], axis[2])
 						then
 							seen[nKey] = true
+							regionOf[nKey] = regionId
 							table.insert(queue, { nx, nz })
 						end
 					end
@@ -157,6 +228,13 @@ function Metrics.compute(make: any, layouts: { [string]: any }, options: any?): 
 				table.insert(regions, size)
 			end
 		end
+	end
+
+	-- The spawn's region, read before the sort reorders the sizes.
+	local spawnRegionSize = nil
+	if opts.spawn ~= nil then
+		local id = regionOf[regionKey(opts.spawn.cellX, opts.spawn.cellZ)]
+		spawnRegionSize = if id ~= nil then regions[id] else nil
 	end
 
 	table.sort(regions, function(a, b)
@@ -173,6 +251,7 @@ function Metrics.compute(make: any, layouts: { [string]: any }, options: any?): 
 		end
 	end
 	local enclosedCells = totalRegionCells - largest
+	local reachableCells = spawnRegionSize or largest
 
 	-- Sightlines along the axes from a sample of open cells.
 	local totalSight, samples, maxSight, countSight = 0, 0, 0, 0
@@ -227,6 +306,9 @@ function Metrics.compute(make: any, layouts: { [string]: any }, options: any?): 
 		largeThresholdCells = largeThreshold,
 		enclosedRegions = #regions > 1 and #regions - 1 or 0,
 		enclosedShare = if totalRegionCells > 0 then enclosedCells / totalRegionCells else 0,
+		reachableShare = if totalRegionCells > 0 then reachableCells / totalRegionCells else 0,
+		reachableOrigin = if spawnRegionSize ~= nil then "spawn" else "largest",
+		largestRegionShare = if totalRegionCells > 0 then largest / totalRegionCells else 0,
 		sightlineMean = if countSight > 0 then totalSight / countSight else 0,
 		sightlineMax = maxSight,
 		sightSamples = samples,

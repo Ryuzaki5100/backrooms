@@ -4,6 +4,9 @@ local H = require("../harness")
 local OpenAdditive = require("../../src/shared/procgen/strategies/OpenAdditive")
 local ChunkRenderer = require("../../src/shared/procgen/grid/ChunkRenderer")
 local Metrics = require("../../src/shared/procgen/Metrics")
+local ChunkLayout = require("../../src/shared/procgen/grid/ChunkLayout")
+local WalkGraph = require("../../src/shared/procgen/grid/WalkGraph")
+local Terrain = require("../../src/shared/procgen/features/Terrain")
 local Hash = require("../../src/shared/procgen/Hash")
 local Level0 = require("../../src/config/levels/Level_0")
 
@@ -196,6 +199,254 @@ H.test("terrain generates plateaus and sound ramps when enabled", function()
 	H.ok(ramps > 0, "has ramps")
 end)
 
+local function terrainWorld(seed: number): any
+	local config = clone(Level0)
+	config.world = clone(Level0.world)
+	config.world.worldSizeChunks = 3
+	config.world.boundaryMode = "wrap"
+	config.strategy = clone(Level0.strategy)
+	config.strategy.params = clone(Level0.strategy.params)
+	config.strategy.params.terrain = {
+		rise = 4,
+		plateauShare = 0.15,
+		sunkenShare = 0.15,
+		rampChance = 0.30,
+		minHeadroom = 9,
+	}
+	return OpenAdditive.world(config, seed)
+end
+
+local STEPS = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
+
+-- Cells with floorY ~= 0 flooded by equal floor level (walls ignored): each
+-- result is one plateau / sunken region.
+local function levelRegions(layout: any): { { number } }
+	local n = layout.n
+	local seen: { [number]: boolean } = {}
+	local regions = {}
+	for start = 1, n * n do
+		if not seen[start] and not layout.solid[start] and layout.floorY[start] ~= 0 then
+			local level = layout.floorY[start]
+			local cells = { start }
+			seen[start] = true
+			local head = 1
+			while head <= #cells do
+				local current = cells[head]
+				head += 1
+				local i, j = (current - 1) % n + 1, (current - 1) // n + 1
+				for _, step in ipairs(STEPS) do
+					local ni, nj = i + step[1], j + step[2]
+					if ni >= 1 and nj >= 1 and ni <= n and nj <= n then
+						local other = ChunkLayout.index(n, ni, nj)
+						if
+							not seen[other]
+							and not layout.solid[other]
+							and layout.floorY[other] == level
+						then
+							seen[other] = true
+							table.insert(cells, other)
+						end
+					end
+				end
+			end
+			table.insert(regions, cells)
+		end
+	end
+	return regions
+end
+
+-- Whether the cell at `index` can walk out of the chunk through a border face.
+-- East and south faces are this chunk's; west and north are the neighbour's, so
+-- they count when the seam leaves them open and the floors meet within stepMax.
+local function opensOutward(make: any, layout: any, index: number, stepMax: number): boolean
+	local n = layout.n
+	local i, j = (index - 1) % n + 1, (index - 1) // n + 1
+	local gx, gz = layout.cx * n + i - 1, layout.cz * n + j - 1
+	local floor = layout.floorY[index]
+	return (i == n and not layout.sealedE[index])
+		or (j == n and not layout.sealedS[index])
+		or (i == 1 and not OpenAdditive.faceV(make, gx, gz) and math.abs(
+			Terrain.terrainAt(make, gx - 1, gz) - floor
+		) <= stepMax)
+		or (
+			j == 1
+			and not OpenAdditive.faceH(make, gx, gz)
+			and math.abs(Terrain.terrainAt(make, gx, gz - 1) - floor) <= stepMax
+		)
+end
+
+H.test("terrain sweep: no open cliffs, every region reachable", function()
+	local totalRamps, totalSolidified = 0, 0
+	for seed = 1, 10 do
+		local make = terrainWorld(seed)
+		local stepMax = Terrain.stepMax(make)
+		local repaired, solidified, regionCount, tails = 0, 0, 0, 0
+		local layouts = {}
+		for cz = 0, 2 do
+			for cx = 0, 2 do
+				local layout = OpenAdditive.layout(make, cx, cz)
+				layouts[cx .. ":" .. cz] = layout
+				local where = "seed " .. seed .. " chunk " .. cx .. "," .. cz
+				repaired += layout.rampsRepaired
+				solidified += layout.solidified
+				local n = layout.n
+
+				H.eq(
+					#WalkGraph.unbridgedRises(layout, { stepMax = stepMax }),
+					0,
+					where .. ": no open cliffs"
+				)
+
+				local graph = WalkGraph.build(layout, { stepMax = stepMax })
+				local comps = WalkGraph.components(graph)
+				if #comps > 0 then
+					local main = 1
+					for index = 2, #comps do
+						if comps[index].size > comps[main].size then
+							main = index
+						end
+					end
+					local reach = WalkGraph.reachableFrom(graph, comps[main].cells[1])
+					-- A walkable cell outside main's component is only allowed when the
+					-- component continues into the neighbouring chunk, which this chunk
+					-- may not decide (a border tail); anything else would be a pocket.
+					for _, comp in ipairs(comps) do
+						if not reach[comp.cells[1]] then
+							local outward = false
+							for _, index in ipairs(comp.cells) do
+								outward = outward or opensOutward(make, layout, index, stepMax)
+							end
+							tails += comp.size
+							H.ok(
+								outward,
+								where .. ": unreachable component of " .. comp.size .. " cells"
+							)
+						end
+					end
+				end
+
+				-- A plateau or sunken region needs a ramp in it or beside it, unless it
+				-- runs off the chunk (its way up may be in the neighbour).
+				for _, cells in ipairs(levelRegions(layout)) do
+					regionCount += 1
+					local bridged, offChunk = false, false
+					for _, index in ipairs(cells) do
+						local i, j = (index - 1) % n + 1, (index - 1) // n + 1
+						if i == 1 or j == 1 or i == n or j == n then
+							offChunk = true
+						end
+						if layout.ramp[index] ~= nil then
+							bridged = true
+						end
+						for _, step in ipairs(STEPS) do
+							local ni, nj = i + step[1], j + step[2]
+							if ni >= 1 and nj >= 1 and ni <= n and nj <= n then
+								if layout.ramp[ChunkLayout.index(n, ni, nj)] ~= nil then
+									bridged = true
+								end
+							end
+						end
+					end
+					H.ok(
+						bridged or offChunk,
+						where .. ": region of " .. #cells .. " cells has no ramp"
+					)
+				end
+			end
+		end
+		-- Across chunk borders the border tails join their neighbours: the whole
+		-- wrap world is one walk region.
+		local metrics = Metrics.compute(make, layouts, { sightlineStride = 6 })
+		H.eq(metrics.regions, 1, "seed " .. seed .. ": one walk region across the world")
+		H.eq(metrics.reachableShare, 1, "seed " .. seed .. ": reachableShare")
+		totalRamps += repaired
+		totalSolidified += solidified
+		print(
+			string.format(
+				"  [sweep] seed %d: %d ramps added by repair, %d cells solidified, %d border-tail cells, %d level regions",
+				seed,
+				repaired,
+				solidified,
+				tails,
+				regionCount
+			)
+		)
+	end
+	print(
+		string.format(
+			"  [sweep] total: %d repair ramps, %d solidified cells",
+			totalRamps,
+			totalSolidified
+		)
+	)
+end)
+
+H.test("metrics: a plateau without a ramp is not in the reachable region", function()
+	local n = 6
+	local make = { n = n, cell = 16, period = n, seed = 1, params = {} }
+	local function at(i: number, j: number): number
+		return ChunkLayout.index(n, i, j)
+	end
+	local function near(a: number, b: number): boolean
+		return math.abs(a - b) < 1e-9
+	end
+	-- A 2x2 plateau at (3..4, 3..4), rise 4, walled on all four sides.
+	local function plateau(withRamp: boolean): any
+		local layout = ChunkLayout.new(0, 0, n, 16)
+		for j = 3, 4 do
+			for i = 3, 4 do
+				layout.floorY[at(i, j)] = 4
+			end
+		end
+		for k = 3, 4 do
+			layout.sealedE[at(2, k)] = true
+			layout.sealedE[at(4, k)] = true
+			layout.sealedS[at(k, 2)] = true
+			layout.sealedS[at(k, 4)] = true
+		end
+		if withRamp then
+			-- (3,3) climbs eastwards onto the plateau from (2,3).
+			layout.ramp[at(3, 3)] = { axis = "x", dir = 1, lowY = 0, highY = 4 }
+			layout.sealedE[at(2, 3)] = false
+		end
+		return layout
+	end
+
+	local walled = Metrics.compute(make, { ["0:0"] = plateau(false) })
+	H.eq(walled.regions, 2, "the walled plateau is its own region")
+	H.eq(walled.largestRegion, 32, "main region")
+	H.ok(near(walled.reachableShare, 32 / 36), "plateau is not reachable")
+	H.eq(walled.reachableOrigin, "largest", "no spawn given")
+
+	local ramped = Metrics.compute(make, { ["0:0"] = plateau(true) })
+	H.eq(ramped.regions, 1, "the ramp joins the plateau")
+	H.ok(near(ramped.reachableShare, 1), "plateau is reachable")
+
+	-- The spawn picks the region: standing on the plateau, only it is reachable.
+	local fromPlateau = Metrics.compute(
+		make,
+		{ ["0:0"] = plateau(false) },
+		{ spawn = { cellX = 2, cellZ = 2 } }
+	)
+	H.eq(fromPlateau.reachableOrigin, "spawn", "spawn given")
+	H.ok(near(fromPlateau.reachableShare, 4 / 36), "the spawn's own region")
+
+	-- Unsealed but 4 studs up with no ramp: an open cliff is not a way in.
+	local cliff = plateau(false)
+	cliff.sealedE[at(2, 3)] = false
+	H.eq(Metrics.compute(make, { ["0:0"] = cliff }).regions, 2, "an open cliff is not walkable")
+
+	-- A 1-stud step needs no ramp.
+	local stepped = plateau(false)
+	for j = 3, 4 do
+		for i = 3, 4 do
+			stepped.floorY[at(i, j)] = 1
+		end
+	end
+	stepped.sealedE[at(2, 3)] = false
+	H.eq(Metrics.compute(make, { ["0:0"] = stepped }).regions, 1, "a 1-stud step is walkable")
+end)
+
 local function partFingerprint(config: any, seed: number): (string, number)
 	local make = OpenAdditive.world(config, seed)
 	local lines = {}
@@ -230,10 +481,10 @@ H.test("pinned Level 0 fingerprint (templates clear their footprint)", function(
 	config.world.worldSizeChunks = 3
 
 	local fp42, count42 = partFingerprint(config, 42)
-	H.eq(fp42, "486e871bef980b8d", "seed 42 fingerprint")
+	H.eq(fp42, "35921ec08c4629ba", "seed 42 fingerprint")
 	H.eq(count42, 506, "seed 42 part count")
 
 	local fp1337, count1337 = partFingerprint(config, 1337)
-	H.eq(fp1337, "0955f018db7b7c1e", "seed 1337 fingerprint")
-	H.eq(count1337, 480, "seed 1337 part count")
+	H.eq(fp1337, "77a6350f2e2343f1", "seed 1337 fingerprint")
+	H.eq(count1337, 482, "seed 1337 part count")
 end)

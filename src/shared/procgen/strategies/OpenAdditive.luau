@@ -13,6 +13,9 @@ local Rng = if script ~= nil then require(script.Parent.Parent.Rng) else require
 local Layout = if script ~= nil
 	then require(script.Parent.Parent.grid.ChunkLayout)
 	else require("../grid/ChunkLayout")
+local WalkGraph = if script ~= nil
+	then require(script.Parent.Parent.grid.WalkGraph)
+	else require("../grid/WalkGraph")
 local World = if script ~= nil then require(script.Parent.Parent.World) else require("../World")
 local Common = if script ~= nil
 	then require(script.Parent.Parent.features.Common)
@@ -198,56 +201,30 @@ end
 
 -- Layout -------------------------------------------------------------------
 
-local function openNeighbour(layout: any, i: number, j: number, di: number, dj: number): boolean
-	if di == 1 then
-		return not layout.sealedE[Layout.index(layout.n, i, j)]
-	elseif di == -1 then
-		return i > 1 and not layout.sealedE[Layout.index(layout.n, i - 1, j)]
-	elseif dj == 1 then
-		return not layout.sealedS[Layout.index(layout.n, i, j)]
-	end
-	return j > 1 and not layout.sealedS[Layout.index(layout.n, i, j - 1)]
+local STEPS = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
+
+local function cellOf(n: number, index: number): (number, number)
+	return (index - 1) % n + 1, (index - 1) // n + 1
 end
 
--- Components of open floor, traversing only faces inside the chunk. Border
--- faces are never traversed, because the chunk is not allowed to decide them.
-local function components(layout: any): ({ any }, { [number]: number })
-	local n = layout.n
-	local compId: { [number]: number } = {}
-	local list = {}
-	for j = 1, n do
-		for i = 1, n do
-			local index = Layout.index(n, i, j)
-			if not layout.solid[index] and compId[index] == nil then
-				local id = #list + 1
-				local cells = {}
-				local queue = { { i, j } }
-				compId[index] = id
-				local head = 1
-				while head <= #queue do
-					local cell = queue[head]
-					head += 1
-					table.insert(cells, cell)
-					for _, step in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
-						local ni, nj = cell[1] + step[1], cell[2] + step[2]
-						if ni >= 1 and nj >= 1 and ni <= n and nj <= n then
-							local nIndex = Layout.index(n, ni, nj)
-							if
-								not layout.solid[nIndex]
-								and compId[nIndex] == nil
-								and openNeighbour(layout, cell[1], cell[2], step[1], step[2])
-							then
-								compId[nIndex] = id
-								table.insert(queue, { ni, nj })
-							end
-						end
-					end
-				end
-				table.insert(list, { cells = cells, size = #cells })
-			end
+-- Components of walkable floor (ADR 0031 D60): non-solid, non-template cells
+-- joined across interior unsealed faces whose floors meet (a step within
+-- `stepMax`, or a ramp end). Border faces are never traversed, because the chunk
+-- is not allowed to decide them. Cells are cell indices, not (i, j) pairs.
+local function components(layout: any, stepMax: number): ({ any }, { [number]: number }, any)
+	local graph = WalkGraph.build(layout, { stepMax = stepMax })
+	local list, compId = WalkGraph.components(graph)
+	return list, compId, graph
+end
+
+local function largestComponent(comps: { any }): number
+	local main = 1
+	for index = 2, #comps do
+		if comps[index].size > comps[main].size then
+			main = index
 		end
 	end
-	return list, compId
+	return main
 end
 
 local function setSealed(
@@ -270,57 +247,97 @@ local function setSealed(
 	end
 end
 
+-- Terrain can leave a face open that no foot can cross: its ramp's low end lands
+-- on the side of another ramp (a slope is not a floor to step down onto). That
+-- is an open cliff (ADR 0031 D62). Seal it, and drop a ramp whose low end was
+-- that face, since it would now end at a wall. Returns the faces sealed.
+local function sealOpenCliffs(layout: any, stepMax: number): number
+	local sealed = 0
+	for _, rise in ipairs(WalkGraph.unbridgedRises(layout, { stepMax = stepMax })) do
+		local a, b = rise.a, rise.b
+		local axis = if rise.axis == "E" then "x" else "z"
+		if rise.axis == "E" then
+			layout.sealedE[a] = true
+		else
+			layout.sealedS[a] = true
+		end
+		-- b is the higher-coordinate cell: its low end faces a when dir == 1.
+		local rampB, rampA = layout.ramp[b], layout.ramp[a]
+		if rampB ~= nil and rampB.axis == axis and rampB.dir == 1 then
+			layout.ramp[b] = nil
+		end
+		if rampA ~= nil and rampA.axis == axis and rampA.dir == -1 then
+			layout.ramp[a] = nil
+		end
+		sealed += 1
+	end
+	return sealed
+end
+
+-- The walk graph the layout would have with every interior face open: its edges
+-- are exactly the faces that are legal to open (same level, a step within
+-- stepMax, or a ramp end).
+local function openableGraph(layout: any, stepMax: number): any
+	local shadow = {
+		n = layout.n,
+		solid = layout.solid,
+		templateCell = layout.templateCell,
+		floorY = layout.floorY,
+		ramp = layout.ramp,
+		sealedE = {},
+		sealedS = {},
+	}
+	return WalkGraph.build(shadow, { stepMax = stepMax })
+end
+
 -- Remove walls only: for every component that is not the main one, BFS inside
--- the chunk to the main component and open the faces along the path.
-local function connect(layout: any): ()
+-- the chunk to the main component and open the faces along the path. A step is
+-- only taken across a face that would be walkable once opened: opening a face
+-- between floors that differ by more than stepMax would make a cliff (ADR 0031
+-- D61). Regions that only a ramp can join are left to `repairRamps`.
+local function connect(layout: any, stepMax: number): ()
 	local n = layout.n
 	for _ = 1, n * n do
-		local comps = components(layout)
+		local comps = components(layout, stepMax)
 		if #comps <= 1 then
 			return
 		end
-		local main = 1
-		for index = 2, #comps do
-			if comps[index].size > comps[main].size then
-				main = index
-			end
+		local main = largestComponent(comps)
+		local inMain: { [number]: boolean } = {}
+		for _, cellIndex in ipairs(comps[main].cells) do
+			inMain[cellIndex] = true
 		end
+		local openable = openableGraph(layout, stepMax)
 
 		local connected = false
 		for index, comp in ipairs(comps) do
 			if index ~= main then
 				-- BFS from this component to any main cell, inside the chunk.
-				local start = comp.cells[1]
+				local startIndex = comp.cells[1]
 				local parent: { [number]: number } = {}
-				local seen: { [number]: boolean } = {}
-				local queue = { start }
-				local startIndex = Layout.index(n, start[1], start[2])
-				seen[startIndex] = true
+				local seen: { [number]: boolean } = { [startIndex] = true }
+				local queue = { startIndex }
 				local head = 1
 				local targetIndex = nil
 				while head <= #queue and targetIndex == nil do
-					local cell = queue[head]
+					local current = queue[head]
 					head += 1
-					for _, step in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
-						local ni, nj = cell[1] + step[1], cell[2] + step[2]
+					local ci, cj = cellOf(n, current)
+					for _, step in ipairs(STEPS) do
+						local ni, nj = ci + step[1], cj + step[2]
 						if ni >= 1 and nj >= 1 and ni <= n and nj <= n then
 							local nIndex = Layout.index(n, ni, nj)
-							if not layout.solid[nIndex] and not seen[nIndex] then
+							if
+								not seen[nIndex]
+								and openable.walkable[nIndex]
+								and table.find(openable.adj[current], nIndex) ~= nil
+							then
 								seen[nIndex] = true
-								parent[nIndex] = Layout.index(n, cell[1], cell[2])
-								table.insert(queue, { ni, nj })
-								if targetIndex == nil then
-									-- is this cell in the main component?
-									local isMain = false
-									for _, mainCell in ipairs(comps[main].cells) do
-										if mainCell[1] == ni and mainCell[2] == nj then
-											isMain = true
-											break
-										end
-									end
-									if isMain then
-										targetIndex = nIndex
-									end
+								parent[nIndex] = current
+								table.insert(queue, nIndex)
+								if inMain[nIndex] then
+									targetIndex = nIndex
+									break
 								end
 							end
 						end
@@ -335,10 +352,8 @@ local function connect(layout: any): ()
 						if previous == nil then
 							break
 						end
-						local ci = (cursor - 1) % n + 1
-						local cj = math.floor((cursor - 1) / n) + 1
-						local pi = (previous - 1) % n + 1
-						local pj = math.floor((previous - 1) / n) + 1
+						local ci, cj = cellOf(n, cursor)
+						local pi, pj = cellOf(n, previous)
 						setSealed(layout, pi, pj, ci - pi, cj - pj, false)
 						cursor = previous
 					end
@@ -356,35 +371,229 @@ local function connect(layout: any): ()
 	end
 end
 
+-- Repair for height-separated regions (ADR 0031 D61). A walkable component that
+-- `connect` could not join is separated from the main one by a rise above
+-- stepMax; the only legal bridge is a ramp. For each such component, candidate
+-- boundary faces (between it and a cell reachable from main, sealed, rising by
+-- more than stepMax) are sorted by a canonical hash and the first that fits the
+-- Terrain ramp rule AND actually joins the component is taken. A region larger
+-- than REPAIR_CELLS gets up to round(size / REPAIR_CELLS) ramps in total, so a
+-- big plateau has more than one way up. Repeats until no progress. Returns the
+-- number of ramps added.
+local REPAIR_CELLS = 12
+
+local function repairRamps(make: any, layout: any, stepMax: number): number
+	local n = layout.n
+	local originX, originZ = layout.cx * n, layout.cz * n
+	local added = 0
+
+	-- Sealed boundary faces from `cells` to cells in `target` across a rise
+	-- above stepMax, sorted by the canonical hash (ties: E before S, then cell).
+	local function candidates(cells: { number }, target: { [number]: boolean }): { any }
+		local result = {}
+		for _, a in ipairs(cells) do
+			local ai, aj = cellOf(n, a)
+			for _, step in ipairs(STEPS) do
+				local bi, bj = ai + step[1], aj + step[2]
+				if bi >= 1 and bj >= 1 and bi <= n and bj <= n then
+					local b = Layout.index(n, bi, bj)
+					if
+						target[b]
+						and layout.ramp[a] == nil
+						and layout.ramp[b] == nil
+						and math.abs(layout.floorY[a] - layout.floorY[b]) > stepMax
+					then
+						-- The owner of a face is its lower-coordinate cell.
+						local ownerI, ownerJ = math.min(ai, bi), math.min(aj, bj)
+						local axis = if step[1] ~= 0 then "E" else "S"
+						local ownerIndex = Layout.index(n, ownerI, ownerJ)
+						local sealed = if axis == "E"
+							then layout.sealedE[ownerIndex]
+							else layout.sealedS[ownerIndex]
+						if sealed then
+							table.insert(result, {
+								a = a,
+								b = b,
+								ownerI = ownerI,
+								ownerJ = ownerJ,
+								axis = axis,
+								order = if axis == "E" then 0 else 1,
+								key = Common.hash01(
+									make.seed,
+									"ramp:repair",
+									Common.canonical(make, originX + ownerI - 1),
+									Common.canonical(make, originZ + ownerJ - 1)
+								),
+							})
+						end
+					end
+				end
+			end
+		end
+		table.sort(result, function(x, y)
+			if x.key ~= y.key then
+				return x.key < y.key
+			end
+			if x.order ~= y.order then
+				return x.order < y.order
+			end
+			return x.a < y.a
+		end)
+		return result
+	end
+
+	-- Bridge candidate `c` with a ramp on its high side (the Terrain rule) and
+	-- unseal the face. `accept` judges the rebuilt graph; a rejected bridge is
+	-- rolled back exactly.
+	local function tryCandidate(c: any, accept: (any) -> boolean): boolean
+		local aHigh = layout.floorY[c.a] > layout.floorY[c.b]
+		local high = if aHigh then c.a else c.b
+		local low = if aHigh then c.b else c.a
+		local hi, hj = cellOf(n, high)
+		local li, lj = cellOf(n, low)
+		local axis = if c.axis == "E" then "x" else "z"
+		local dir = if axis == "x" then hi - li else hj - lj
+		if
+			not Terrain.tryRamp(
+				make,
+				layout,
+				hi,
+				hj,
+				axis,
+				dir,
+				layout.floorY[low],
+				layout.floorY[high]
+			)
+		then
+			return false
+		end
+		local ownerIndex = Layout.index(n, c.ownerI, c.ownerJ)
+		local sealedMap = if c.axis == "E" then layout.sealedE else layout.sealedS
+		sealedMap[ownerIndex] = false
+		if accept(WalkGraph.build(layout, { stepMax = stepMax })) then
+			return true
+		end
+		sealedMap[ownerIndex] = true
+		layout.ramp[high] = nil
+		return false
+	end
+
+	local function allReached(seen: { [number]: boolean }, cells: { [number]: boolean }): boolean
+		for cellIndex in pairs(cells) do
+			if not seen[cellIndex] then
+				return false
+			end
+		end
+		return true
+	end
+
+	for _ = 1, n * n do
+		local graph = WalkGraph.build(layout, { stepMax = stepMax })
+		local comps = WalkGraph.components(graph)
+		if #comps <= 1 then
+			break
+		end
+		local main = largestComponent(comps)
+		local reach: { [number]: boolean } = {}
+		for _, cellIndex in ipairs(comps[main].cells) do
+			reach[cellIndex] = true
+		end
+		local mainRep = comps[main].cells[1]
+
+		local progress = false
+		for index, comp in ipairs(comps) do
+			if index ~= main then
+				local first = comp.cells[1]
+				local joined = false
+				-- The bridge must put this component in main's and strand nothing
+				-- main already reached.
+				for _, c in ipairs(candidates(comp.cells, reach)) do
+					if
+						tryCandidate(c, function(g: any): boolean
+							local seen = WalkGraph.reachableFrom(g, mainRep)
+							return seen[first] == true and allReached(seen, reach)
+						end)
+					then
+						joined = true
+						added += 1
+						break
+					end
+				end
+				if joined then
+					progress = true
+					-- A big region earns more than one way in.
+					local want = math.floor(comp.size / REPAIR_CELLS + 0.5)
+					if comp.size > REPAIR_CELLS and want > 1 then
+						local together: { [number]: boolean } = {}
+						for cellIndex in pairs(reach) do
+							together[cellIndex] = true
+						end
+						for _, cellIndex in ipairs(comp.cells) do
+							together[cellIndex] = true
+						end
+						local extra = 1
+						for _, c in ipairs(candidates(comp.cells, reach)) do
+							if extra >= want then
+								break
+							end
+							if
+								tryCandidate(c, function(g: any): boolean
+									return allReached(WalkGraph.reachableFrom(g, mainRep), together)
+								end)
+							then
+								extra += 1
+								added += 1
+							end
+						end
+					end
+					break
+				end
+			end
+		end
+		if not progress then
+			break
+		end
+	end
+	return added
+end
+
 -- A pocket is a component that is not the main one and has no open face to the
 -- outside. With `solidify` it becomes mass, which is honest: an invisible room
--- is wasted volume, and windows (M13) are what would make it visible.
-local function settlePockets(make: any, layout: any, policy: string): number
-	local comps = components(layout)
+-- is wasted volume, and windows (M13) are what would make it visible. A region
+-- the repair could not bridge (a plateau with nowhere to put a ramp) is a
+-- pocket too: it is not reachable, so it is not floor (ADR 0031 D61).
+local function settlePockets(make: any, layout: any, policy: string, stepMax: number): number
+	local comps = components(layout, stepMax)
 	if #comps <= 1 then
 		return 0
 	end
-	local main = 1
-	for index = 2, #comps do
-		if comps[index].size > comps[main].size then
-			main = index
-		end
-	end
+	local main = largestComponent(comps)
 	local n = layout.n
 	local solidified = 0
 	for index, comp in ipairs(comps) do
 		if index ~= main then
+			-- Whether the component can continue into the neighbouring chunk. The
+			-- west and north faces belong to the neighbour, so they are judged by
+			-- the seam function plus the floors on both sides: a rise above
+			-- stepMax is a wall unless the neighbour happens to ramp it, which
+			-- this chunk cannot know and must not assume.
 			local function touchesOutside(): boolean
-				for _, cell in ipairs(comp.cells) do
-					local i, j = cell[1], cell[2]
-					local idx = Layout.index(n, i, j)
+				for _, cellIndex in ipairs(comp.cells) do
+					local i, j = cellOf(n, cellIndex)
 					local gx = layout.cx * n + i - 1
 					local gz = layout.cz * n + j - 1
+					local floor = layout.floorY[cellIndex]
 					if
-						(i == 1 and not OpenAdditive.faceV(make, gx, gz))
-						or (i == n and not layout.sealedE[idx])
-						or (j == 1 and not OpenAdditive.faceH(make, gx, gz))
-						or (j == n and not layout.sealedS[idx])
+						(
+							i == 1
+							and not OpenAdditive.faceV(make, gx, gz)
+							and math.abs(Terrain.terrainAt(make, gx - 1, gz) - floor) <= stepMax
+						)
+						or (i == n and not layout.sealedE[cellIndex])
+						or (j == 1 and not OpenAdditive.faceH(make, gx, gz) and math.abs(
+							Terrain.terrainAt(make, gx, gz - 1) - floor
+						) <= stepMax)
+						or (j == n and not layout.sealedS[cellIndex])
 					then
 						return true
 					end
@@ -393,8 +602,9 @@ local function settlePockets(make: any, layout: any, policy: string): number
 			end
 			local open = touchesOutside()
 			if not open and policy == "solidify" then
-				for _, cell in ipairs(comp.cells) do
-					Layout.set(layout, cell[1], cell[2], true)
+				for _, cellIndex in ipairs(comp.cells) do
+					local i, j = cellOf(n, cellIndex)
+					Layout.set(layout, i, j, true)
 					solidified += 1
 				end
 			end
@@ -431,7 +641,7 @@ local function placeDetails(make: any, layout: any): ()
 	if #details == 0 then
 		return
 	end
-	local comps, compId = components(layout)
+	local comps, compId = components(layout, Terrain.stepMax(make))
 	local sizes = {}
 	for index, comp in ipairs(comps) do
 		sizes[index] = comp.size
@@ -579,9 +789,12 @@ function OpenAdditive.layout(make: any, cx: number, cz: number, options: any?): 
 
 	Features.apply(make, layout)
 
-	connect(layout)
+	local stepMax = Terrain.stepMax(make)
+	layout.cliffsSealed = sealOpenCliffs(layout, stepMax)
+	connect(layout, stepMax)
+	layout.rampsRepaired = repairRamps(make, layout, stepMax)
 	local policy = opts.enclosedPolicy or DEFAULTS.enclosedPolicy or "solidify"
-	layout.solidified = settlePockets(make, layout, policy)
+	layout.solidified = settlePockets(make, layout, policy, stepMax)
 	placeDetails(make, layout)
 	return layout
 end
@@ -599,7 +812,7 @@ end
 -- walk out of it. Nearest to the chunk centre, deterministic tie-break.
 function OpenAdditive.spawn(make: any, layout: any): any
 	local n = layout.n
-	local comps, compId = components(layout)
+	local comps, compId = components(layout, Terrain.stepMax(make))
 	local main, size = 0, 0
 	for index, comp in ipairs(comps) do
 		if comp.size > size then
