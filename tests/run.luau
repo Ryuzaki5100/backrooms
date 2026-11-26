@@ -17,6 +17,7 @@ require("./procgen/grid.spec")
 require("./procgen/world.spec")
 require("./procgen/strategy.spec")
 require("./procgen/open-additive.spec")
+require("./procgen/walkgraph.spec")
 require("./procgen/template.spec")
 
 process.exit(Harness.run())
