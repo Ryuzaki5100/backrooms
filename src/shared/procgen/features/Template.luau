@@ -6,10 +6,13 @@
 -- instance needs a rectangular patch of floor that is flat, open and unclaimed,
 -- and it reserves that patch so nothing else lands on it.
 --
--- Determinism: the scan starts at a cell hashed from the seed, then takes the
--- first candidate in raster order with wraparound. That is stable per seed but
--- puts the patch wherever the hash lands, instead of always in the corner that
--- a raster scan starting at (1,1) would fill first.
+-- Determinism: the scan starts at a cell hashed from the seed and the chunk's
+-- canonical coordinates, then takes the first candidate in raster order with
+-- wraparound. The chunk coordinates are part of the hash so every chunk tries a
+-- different relative cell first; hashing the seed alone sent every chunk to the
+-- same cell and tiled the template in a lattice. The coordinates are canonical
+-- (wrapped, derived from cell coordinates), so a chunk and its wrapped copy
+-- start at the same cell and place identically.
 --
 -- Placement is chunk-local: a chunk only knows the templates it placed itself,
 -- which is what keeps chunk generation order-independent. The descriptor carries
@@ -143,6 +146,8 @@ function Template.apply(make: any, layout: any): ()
 	end
 	local n = layout.n
 	local total = n * n
+	local chunkX = math.floor(Common.canonical(make, layout.cx * n) / n)
+	local chunkZ = math.floor(Common.canonical(make, layout.cz * n) / n)
 
 	for specIndex, spec in ipairs(specs) do
 		local w = (spec.footprint and spec.footprint.w) or 0
@@ -150,10 +155,14 @@ function Template.apply(make: any, layout: any): ()
 		local count = spec.count or DEFAULTS.count
 		local spacing = spec.spacing or DEFAULTS.spacing
 
-		-- One hashed start per spec, then first-fit with wraparound.
+		-- One hashed start per spec and chunk, then first-fit with wraparound.
 		local start = math.floor(
-			Common.hash01(make.seed, "template:" .. specIndex .. ":" .. tostring(spec.ref), 0, 0)
-				* total
+			Common.hash01(
+				make.seed,
+				"template:" .. specIndex .. ":" .. tostring(spec.ref),
+				chunkX,
+				chunkZ
+			) * total
 		)
 		local placed = 0
 		for step = 0, total - 1 do
