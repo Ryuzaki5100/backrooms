@@ -19,3 +19,8 @@ devenv.local.nix
 # Studio lock files for opened local places
 *.rbxlx.lock
 *.rbxl.lock
+.prodev-vault/
+.prodev.local
+.prodev/worktrees/
+.DS_Store
+.claude/worktrees/
