@@ -174,6 +174,29 @@ H.test("perimeter walls close only the world edge", function()
 		worldChunks = 3,
 	})
 	H.eq(#edge - #plain, 2, "east edge and north edge")
+
+	-- The enclosure spans the chunk's mass, base to top, not just the ceiling.
+	local lowest, highest = math.huge, -math.huge
+	for _, part in ipairs(edge) do
+		if part.kind == "floor" then
+			lowest = math.min(lowest, part.position[2] - part.size[2] / 2)
+		elseif part.kind == "ceiling" then
+			highest = math.max(highest, part.position[2] + part.size[2] / 2)
+		end
+	end
+	local spans = 0
+	for _, part in ipairs(edge) do
+		if
+			part.kind == "wall"
+			and (part.size[1] == 1 or part.size[3] == 1)
+			and part.size[2] > 12
+		then
+			spans += 1
+			H.eq(part.position[2] - part.size[2] / 2, lowest, "perimeter reaches the base")
+			H.eq(part.position[2] + part.size[2] / 2, highest, "perimeter reaches the top")
+		end
+	end
+	H.eq(spans, 2, "both perimeter walls are full height")
 end)
 
 H.test("a ramp is a wedge and replaces the floor under it", function()
@@ -193,13 +216,78 @@ H.test("a ramp is a wedge and replaces the floor under it", function()
 	H.eq(ramp.size[2], 4, "rises exactly to the upper floor")
 	H.eq(ramp.position[2], 2, "centred between the planes")
 
+	-- Floor mass under the wedge stops at its low edge; the wedge fills the rest.
 	local cx, cz = 2.5 * 16, 2.5 * 16
+	local under = 0
 	for _, part in ipairs(parts) do
 		if part.kind == "floor" then
 			local halfX, halfZ = part.size[1] / 2, part.size[3] / 2
 			local inside = math.abs(part.position[1] - cx) < halfX
 				and math.abs(part.position[3] - cz) < halfZ
-			H.ok(not inside, "no floor slab inside the ramp footprint")
+			if inside then
+				under += 1
+				H.ok(
+					part.position[2] + part.size[2] / 2 <= 0 + 1e-9,
+					"floor mass under the ramp stops at the wedge's low edge"
+				)
+			end
+		end
+	end
+	H.ok(under > 0, "there is floor mass under the ramp, not a hole down to the sky")
+end)
+
+-- Yaw is in degrees (`Build.apply` applies math.rad(yaw) as is), and a wedge at
+-- yaw 0 rises towards +Z, so the mapping from `dir` (which points at the HIGH
+-- end) is fixed. Build.apply only needs the degree convention, which cannot be
+-- loaded under Lune (it requires Roblox services), so it is pinned here.
+H.test("ramp yaw is in degrees and follows the documented mapping", function()
+	local cases = {
+		{ axis = "z", dir = 1, yaw = 0 },
+		{ axis = "z", dir = -1, yaw = 180 },
+		{ axis = "x", dir = 1, yaw = 90 },
+		{ axis = "x", dir = -1, yaw = -90 },
+	}
+	for _, case in ipairs(cases) do
+		local layout = empty(6, 16)
+		layout.floorY[ChunkLayout.index(6, 3, 3)] = 4
+		layout.ramp[ChunkLayout.index(6, 3, 3)] =
+			{ axis = case.axis, dir = case.dir, lowY = 0, highY = 4 }
+		local yaw = nil
+		for _, part in ipairs(ChunkRenderer.describe(layout, { style = { budget = 300 } })) do
+			if part.kind == "ramp" then
+				yaw = part.yaw
+			end
+		end
+		H.eq(yaw, case.yaw, "axis " .. case.axis .. " dir " .. case.dir)
+		-- Rotating +Z by yaw lands on the high end (dir along the axis).
+		local radians = math.rad(case.yaw)
+		local highX = math.floor(math.sin(radians) + 0.5)
+		local highZ = math.floor(math.cos(radians) + 0.5)
+		H.eq(highX, if case.axis == "x" then case.dir else 0, "high end x, " .. case.axis)
+		H.eq(highZ, if case.axis == "z" then case.dir else 0, "high end z, " .. case.axis)
+	end
+end)
+
+H.test("floors and ceilings are mass from the chunk base to the chunk top", function()
+	local layout = empty(6, 16)
+	layout.floorY[ChunkLayout.index(6, 2, 2)] = -4
+	layout.height[ChunkLayout.index(6, 5, 5)] = 16
+	local parts = ChunkRenderer.describe(layout, { style = { budget = 300 } })
+	local lowest, highest = math.huge, -math.huge
+	for _, part in ipairs(parts) do
+		if part.kind == "floor" then
+			lowest = math.min(lowest, part.position[2] - part.size[2] / 2)
+		elseif part.kind == "ceiling" then
+			highest = math.max(highest, part.position[2] + part.size[2] / 2)
+		end
+	end
+	H.eq(lowest, -14, "base is the lowest floor (-4) minus the 10-stud margin")
+	H.eq(highest, 18, "top is the highest ceiling (16) plus the 2-stud margin")
+	for _, part in ipairs(parts) do
+		if part.kind == "floor" then
+			H.eq(part.position[2] - part.size[2] / 2, -14, "every floor reaches the base")
+		elseif part.kind == "ceiling" then
+			H.eq(part.position[2] + part.size[2] / 2, 18, "every ceiling reaches the top")
 		end
 	end
 end)

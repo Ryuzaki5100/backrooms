@@ -85,7 +85,7 @@ local function applyTemplate(spec: any, parent: Folder): ()
 	end
 	local cframe = CFrame.new(toVector(spec.position))
 	if spec.yaw ~= nil and spec.yaw ~= 0 then
-		cframe = cframe * CFrame.Angles(0, math.rad(spec.yaw * 90), 0)
+		cframe = cframe * CFrame.Angles(0, math.rad(spec.yaw), 0)
 	end
 	model:PivotTo(cframe)
 	model.Parent = parent
@@ -126,13 +126,14 @@ function Build.apply(parts: { any }, options: any?): Folder
 			continue
 		end
 
-		-- Ramps are true wedges (ADR 0029), not tilted boxes.
+		-- Ramps are true wedges (ADR 0029), not tilted boxes. Part yaw is in degrees
+		-- (ChunkRenderer documents the wedge mapping), hence math.rad(spec.yaw).
 		local part = Instance.new(if spec.wedge == true then "WedgePart" else "Part")
 		part.Name = tostring(spec.owner) .. "_" .. tostring(spec.kind)
 		part.Size = toVector(spec.size)
 		local cframe = CFrame.new(toVector(spec.position))
 		if spec.yaw ~= nil and spec.yaw ~= 0 then
-			cframe = cframe * CFrame.Angles(0, math.rad(spec.yaw * 90), 0)
+			cframe = cframe * CFrame.Angles(0, math.rad(spec.yaw), 0)
 		end
 		if spec.pitch ~= nil and spec.pitch ~= 0 then
 			cframe = cframe * CFrame.Angles(0, 0, math.rad(spec.pitch))
