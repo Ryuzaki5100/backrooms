@@ -325,3 +325,94 @@ H.test("the footprint is clear: no procedural floor, band or shell", function()
 	end
 	H.ok(checked > 0, "checked some parts")
 end)
+
+-- Every chunk's templates, keyed "cx,cz", for a 3x3 Level 0 world.
+local function worldPlacements(seed: number, spec: any): { [string]: string }
+	local make = demo(seed, spec)
+	local out = {}
+	for cz = 0, 2 do
+		for cx = 0, 2 do
+			out[cx .. "," .. cz] = placement(OpenAdditive.layout(make, cx, cz))
+		end
+	end
+	return out
+end
+
+local function footprints(layout: any): string
+	local parts = {}
+	for _, template in ipairs(layout.templates) do
+		table.insert(
+			parts,
+			template.modelId
+				.. ":"
+				.. template.cellX
+				.. ":"
+				.. template.cellZ
+				.. ":"
+				.. template.w
+				.. ":"
+				.. template.d
+		)
+	end
+	return table.concat(parts, ",")
+end
+
+H.test("the template start varies across chunks (no lattice)", function()
+	local spec = { { ref = "manila", footprint = { w = 3, d = 3 }, count = 1, spacing = 6 } }
+	for _, seed in ipairs({ 42, 1337 }) do
+		local seen = {}
+		local distinct = 0
+		local placedChunks = 0
+		for _, text in pairs(worldPlacements(seed, spec)) do
+			if text ~= "" then
+				placedChunks += 1
+				if not seen[text] then
+					seen[text] = true
+					distinct += 1
+				end
+			end
+		end
+		H.ok(placedChunks >= 2, "at least two chunks placed a template, seed " .. seed)
+		H.ok(distinct >= 2, "placements are not all at one relative cell, seed " .. seed)
+	end
+end)
+
+H.test("a chunk and its wrapped copy place the same templates", function()
+	local spec = { { ref = "manila", footprint = { w = 3, d = 3 }, count = 1, spacing = 6 } }
+	local make = demo(42, spec)
+	local chunks = make.chunks
+	for cz = 0, 2 do
+		for cx = 0, 2 do
+			local home = footprints(OpenAdditive.layout(make, cx, cz))
+			H.ok(home ~= "", "chunk placed a template")
+			H.eq(
+				footprints(OpenAdditive.layout(make, cx + chunks, cz)),
+				home,
+				"east wrapped copy of " .. cx .. "," .. cz
+			)
+			H.eq(
+				footprints(OpenAdditive.layout(make, cx, cz + chunks)),
+				home,
+				"south wrapped copy of " .. cx .. "," .. cz
+			)
+			H.eq(
+				footprints(OpenAdditive.layout(make, cx - chunks, cz - chunks)),
+				home,
+				"negative wrapped copy of " .. cx .. "," .. cz
+			)
+		end
+	end
+end)
+
+H.test("building the same chunk twice yields identical templates", function()
+	local spec = { { ref = "manila", footprint = { w = 3, d = 3 }, count = 1, spacing = 6 } }
+	local make = demo(42, spec)
+	local first = footprints(OpenAdditive.layout(make, 1, 2))
+	local second = footprints(OpenAdditive.layout(make, 1, 2))
+	H.eq(first, second, "same chunk, same templates")
+	H.eq(
+		footprints(OpenAdditive.layout(demo(42, spec), 1, 2)),
+		first,
+		"fresh world, same templates"
+	)
+end)
