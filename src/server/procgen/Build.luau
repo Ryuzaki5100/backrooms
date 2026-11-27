@@ -157,6 +157,12 @@ local function instanceSpec(spec: any, folder: Folder): ()
 		part:SetAttribute("noclipTag", spec.tag)
 		CollectionService:AddTag(part, "noclip." .. tostring(spec.tag))
 	end
+	-- A declared opening (a hole, a window): the geometry audit lets sight lines
+	-- through it. Nothing emits `spec.opening` yet.
+	if spec.opening ~= nil then
+		part:SetAttribute("NoclipOpening", spec.opening)
+		CollectionService:AddTag(part, "NoclipOpening")
+	end
 	part.Parent = folder
 end
 

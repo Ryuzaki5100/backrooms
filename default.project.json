@@ -9,6 +9,9 @@
       },
       "Procgen": {
         "$path": "src/server/procgen"
+      },
+      "Debug": {
+        "$path": "src/server/debug"
       }
     },
     "ReplicatedStorage": {
