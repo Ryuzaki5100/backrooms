@@ -23,9 +23,9 @@ local Common = if script ~= nil
 local Terrain = if script ~= nil
 	then require(script.Parent.Parent.features.Terrain)
 	else require("../features/Terrain")
-local Features = if script ~= nil
-	then require(script.Parent.Parent.features.Features)
-	else require("../features/Features")
+local Level = if script ~= nil
+	then require(script.Parent.Parent.level.Level)
+	else require("../level/Level")
 
 local OpenAdditive = {}
 
@@ -63,7 +63,16 @@ function OpenAdditive.world(config: any, seed: number): any
 		error("OpenAdditive: chunkCells must be a multiple of the block size " .. DEFAULTS.block, 2)
 	end
 	local boundary = (config.world and config.world.boundaryMode) or "wrap"
+	-- Resolved once per world: the generate-phase systems in run order (stage,
+	-- then dependencies), hookless descriptors dropped.
+	local generators: { any } = {}
+	for _, system in ipairs(Level.defaultRegistry():order("generate")) do
+		if system.hooks.generate ~= nil then
+			table.insert(generators, system)
+		end
+	end
 	return {
+		generators = generators,
 		seed = seed,
 		config = config,
 		params = params,
@@ -900,6 +909,16 @@ local function placeDetails(make: any, layout: any): ()
 	end
 end
 
+-- The repair and decorate passes, handed to the connectivity and details systems
+-- through the hook context (they share this module's grid helpers).
+local PASSES = {
+	sealOpenCliffs = sealOpenCliffs,
+	connect = connect,
+	repairRamps = repairRamps,
+	settlePockets = settlePockets,
+	placeDetails = placeDetails,
+}
+
 function OpenAdditive.layout(make: any, cx: number, cz: number, options: any?): any
 	local opts = options or {}
 	local n, cell = make.n, make.cell
@@ -931,25 +950,16 @@ function OpenAdditive.layout(make: any, cx: number, cz: number, options: any?): 
 		layout.outFloorS[j] = outS[3]
 	end
 
-	Features.apply(make, layout)
-
-	local stepMax = Terrain.stepMax(make)
-	layout.cliffsSealed = sealOpenCliffs(layout, stepMax)
-	-- Walls first, then ramps; a ramp can enlarge the main region, so walls are
-	-- opened again until a repair adds nothing (flat worlds stop at once).
-	local repaired = 0
-	for _ = 1, n * n do
-		connect(layout, stepMax)
-		local added = repairRamps(make, layout, stepMax)
-		repaired += added
-		if added == 0 then
-			break
-		end
+	-- Every generate-phase system in registry order: terrain, structures,
+	-- templates, connectivity, details for Level 0 (ADR 0033 D75).
+	local ctx = {
+		options = opts,
+		enclosedPolicy = opts.enclosedPolicy or DEFAULTS.enclosedPolicy or "solidify",
+		passes = PASSES,
+	}
+	for _, system in ipairs(make.generators) do
+		(system.hooks.generate :: any)(make, layout, ctx)
 	end
-	layout.rampsRepaired = repaired
-	local policy = opts.enclosedPolicy or DEFAULTS.enclosedPolicy or "solidify"
-	layout.solidified = settlePockets(make, layout, policy, stepMax)
-	placeDetails(make, layout)
 	return layout
 end
 

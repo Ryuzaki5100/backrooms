@@ -87,4 +87,18 @@ function Structures.apply(make: any, layout: any): ()
 	end
 end
 
+-- Validation for `strategy.params.features` (moved here from Features, messages
+-- unchanged).
+function Structures.validate(features: any?): { string }
+	local problems: { string } = {}
+	local section = features or {}
+	if section.pillarGrid ~= nil and (section.pillarGrid.spacing or 0) < 1 then
+		table.insert(problems, "features.pillarGrid.spacing: must be >= 1")
+	end
+	if section.hangingWall ~= nil and (section.hangingWall.depth or 0) < 1 then
+		table.insert(problems, "features.hangingWall.depth: must be >= 1")
+	end
+	return problems
+end
+
 return Structures

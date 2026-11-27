@@ -55,8 +55,9 @@ function Registry.new(): Registry
 		return table.clone(list)
 	end
 
-	-- Stage decides first; after/before may pull a system later or earlier than
-	-- its stage would place it (an explicit dependency beats a coarse slot).
+	-- Stage decides first (ADR 0033 D75); after/before only order systems within
+	-- one stage. A dependency that contradicts stage order is an error rather than
+	-- a silent override.
 	function self.order(_self: Registry, phase: string): { System.System }
 		assert(System.STAGES[phase] ~= nil, `Registry.order: unknown phase '{phase}'`)
 
@@ -97,8 +98,23 @@ function Registry.new(): Registry
 			edges[system.id] = {}
 			indegree[system.id] = 0
 		end
+		local function stageOf(id: string): number
+			return System.stageIndex(phase, (byId[id] :: System.System).stage)
+		end
 		local function addEdge(first: string, second: string)
-			if not (inPhase[first] and inPhase[second]) or edges[first][second] then
+			if not (inPhase[first] and inPhase[second]) then
+				return
+			end
+			if stageOf(first) > stageOf(second) then
+				local a, b = byId[first] :: System.System, byId[second] :: System.System
+				error(
+					`Registry: '{b.id}' (stage '{tostring(b.stage)}') is ordered after '{a.id}' (stage '{tostring(
+						a.stage
+					)}') in phase '{phase}', but stage order runs '{b.id}' first; after/before only order systems within one stage`,
+					2
+				)
+			end
+			if edges[first][second] then
 				return
 			end
 			edges[first][second] = true

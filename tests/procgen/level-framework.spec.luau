@@ -8,6 +8,9 @@ local System = require("../../src/shared/procgen/level/System")
 local Registry = require("../../src/shared/procgen/level/Registry")
 local Rand = require("../../src/shared/procgen/level/Rand")
 local Level = require("../../src/shared/procgen/level/Level")
+local OpenAdditive = require("../../src/shared/procgen/strategies/OpenAdditive")
+local ChunkRenderer = require("../../src/shared/procgen/grid/ChunkRenderer")
+local Hash = require("../../src/shared/procgen/Hash")
 local Level0 = require("../../src/config/levels/Level_0")
 
 local function sys(id: string, extra: any?): System.System
@@ -67,15 +70,50 @@ H.test("framework: order sorts by stage, then id", function()
 	H.eq(ids(registry:order("render")), "other")
 end)
 
-H.test("framework: after and before reorder within and across stages", function()
+H.test("framework: after and before reorder within a stage", function()
 	local registry = registryOf({
 		sys("a", { stage = "base", after = { "b" } }),
 		sys("b", { stage = "base" }),
-		sys("c", { stage = "field", after = { "d" } }),
+		sys("c", { stage = "decorate", after = { "d" } }),
 		sys("d", { stage = "decorate" }),
 		sys("e", { stage = "decorate", before = { "d" } }),
+		sys("f", { stage = "field", before = { "a" } }),
 	})
-	H.eq(ids(registry:order("generate")), "b,a,e,d,c")
+	H.eq(ids(registry:order("generate")), "f,b,a,e,d,c")
+end)
+
+H.test("framework: a dependency that contradicts stage order is a readable error", function()
+	local afterEarlier = registryOf({
+		sys("late", { stage = "decorate" }),
+		sys("early", { stage = "field", after = { "late" } }),
+	})
+	local message = errorOf(function()
+		afterEarlier:order("generate")
+	end)
+	H.ok(
+		string.find(message, "'early' (stage 'field') is ordered after 'late'", 1, true) ~= nil,
+		message
+	)
+	H.ok(string.find(message, "only order systems within one stage", 1, true) ~= nil, message)
+
+	local beforeEarlier = registryOf({
+		sys("early", { stage = "field" }),
+		sys("late", { stage = "decorate", before = { "early" } }),
+	})
+	local mirrored = errorOf(function()
+		beforeEarlier:order("generate")
+	end)
+	H.ok(
+		string.find(mirrored, "'early' (stage 'field') is ordered after 'late'", 1, true) ~= nil,
+		mirrored
+	)
+
+	-- A dependency across phases is not a stage comparison.
+	local crossPhase = registryOf({
+		sys("g", { stage = "decorate", after = { "r" } }),
+		sys("r", { phase = "render", stage = "surfaces" }),
+	})
+	H.eq(ids(crossPhase:order("generate")), "g")
 end)
 
 H.test("framework: a dependency cycle is a readable error", function()
@@ -197,4 +235,92 @@ H.test("framework: Rand.hash01 is in range, stable and namespaced", function()
 		sum += Rand.hash01(7, "props", i)
 	end
 	H.ok(sum / 200 > 0.4 and sum / 200 < 0.6, "roughly uniform")
+end)
+
+local function generateIds(registry: Registry.Registry): string
+	local out = {}
+	for _, system in ipairs(registry:order("generate")) do
+		if system.hooks.generate ~= nil then
+			table.insert(out, system.id)
+		end
+	end
+	return table.concat(out, ",")
+end
+
+H.test(
+	"framework: Level 0 generates terrain, structures, templates, connectivity, details",
+	function()
+		H.eq(
+			generateIds(Level.defaultRegistry()),
+			"terrain,structures,templates,connectivity,details"
+		)
+		local make = OpenAdditive.world(Level0, 42)
+		local live = {}
+		for _, system in ipairs(make.generators) do
+			table.insert(live, system.id)
+		end
+		H.eq(table.concat(live, ","), "terrain,structures,templates,connectivity,details")
+	end
+)
+
+local function pinFingerprint(seed: number, extra: System.System?): (string, number)
+	local config = table.clone(Level0) :: any
+	config.world = table.clone(Level0.world)
+	config.world.worldSizeChunks = 3
+	local make = OpenAdditive.world(config, seed)
+	if extra ~= nil then
+		local registry = Level.defaultRegistry()
+		registry:register(extra)
+		local generators = {}
+		for _, system in ipairs(registry:order("generate")) do
+			if system.hooks.generate ~= nil then
+				table.insert(generators, system)
+			end
+		end
+		make.generators = generators
+	end
+	local lines = {}
+	for cz = 0, 2 do
+		for cx = 0, 2 do
+			local layout = OpenAdditive.layout(make, cx, cz)
+			for _, part in ipairs(ChunkRenderer.describe(layout, { style = { budget = 9000 } })) do
+				lines[#lines + 1] = table.concat({
+					part.kind,
+					part.owner,
+					tostring(part.size[1]),
+					tostring(part.size[2]),
+					tostring(part.size[3]),
+					tostring(part.position[1]),
+					tostring(part.position[2]),
+					tostring(part.position[3]),
+					tostring(part.yaw),
+					tostring(part.wedge or false),
+				}, "|")
+			end
+		end
+	end
+	table.sort(lines)
+	return Hash.of(table.concat(lines, "\n")), #lines
+end
+
+H.test("framework: an extra no-op generate system leaves both pins unchanged", function()
+	local calls = 0
+	local noop = System.define({
+		id = "noop",
+		owns = { "own_noop" },
+		phase = "generate",
+		stage = "gated",
+		hooks = {
+			generate = function(_make: any, _layout: any, _ctx: any)
+				calls += 1
+			end,
+		},
+	})
+	local fp42, count42 = pinFingerprint(42, noop)
+	H.eq(fp42, "d10a18340f67f4ae", "seed 42 fingerprint")
+	H.eq(count42, 603, "seed 42 part count")
+	local fp1337, count1337 = pinFingerprint(1337, noop)
+	H.eq(fp1337, "d9f25dc6bdb27cc0", "seed 1337 fingerprint")
+	H.eq(count1337, 569, "seed 1337 part count")
+	H.eq(calls, 18, "the extra system ran once per chunk")
 end)
