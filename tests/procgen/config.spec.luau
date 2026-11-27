@@ -262,6 +262,40 @@ H.test("lint: secondRampChance is within [0,1]", function()
 	end
 end)
 
+H.test("lint: ceiling.zoneBlocks must divide the blocks per axis on a wrap world", function()
+	-- Level 0: vast = 400 chunks x 18 cells / 6 = 1200 blocks per axis.
+	H.eq(lintProblems(function(_) end), "", "Level 0 (zoneBlocks 1) passes")
+	H.eq(
+		lintProblems(function(c)
+			c.strategy.params.ceiling.zoneBlocks = 4
+		end),
+		"",
+		"4 divides 1200"
+	)
+	expectProblem(
+		function(c)
+			c.strategy.params.ceiling.zoneBlocks = 7
+		end,
+		"strategy.params.ceiling.zoneBlocks: must divide the blocks per axis of a wrapping world (1200 blocks"
+	)
+	expectProblem(
+		function(c)
+			c.world.worldSizeChunks = 4
+			c.strategy.params.ceiling.zoneBlocks = 5
+		end,
+		"must divide the blocks per axis of a wrapping world (12 blocks = 4 chunks x 18 cells / 6), got 5"
+	)
+	H.eq(
+		lintProblems(function(c)
+			c.world.worldSizeChunks = 4
+			c.world.boundaryMode = "infinite"
+			c.strategy.params.ceiling.zoneBlocks = 5
+		end),
+		"",
+		"an infinite world has no seam"
+	)
+end)
+
 H.test("lint: ramp counts must be positive integers", function()
 	for _, key in ipairs({ "rampSpacing", "extraRampCells", "secondRampFaces" }) do
 		for _, bad in ipairs({ 0, 2.5 }) do

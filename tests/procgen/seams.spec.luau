@@ -38,13 +38,27 @@ local function terrainWorld(seed: number): any
 	return OpenAdditive.world(config, seed)
 end
 
+-- A ramp's two end cells: the high end beyond the ramp cell (+dir) and the low
+-- end (-dir), as chunk-local (i, j); either may fall outside the chunk.
+local function rampEnds(ramp: any, i: number, j: number): { { number } }
+	local function at(sign: number): { number }
+		return {
+			if ramp.axis == "x" then i + sign * ramp.dir else i,
+			if ramp.axis == "z" then j + sign * ramp.dir else j,
+		}
+	end
+	return { at(1), at(-1) }
+end
+
 H.test("terrain stays off chunk borders and ramps keep clear ends (D63, R5)", function()
 	local totalRamps, totalCells, plateauCells, sunkenCells = 0, 0, 0, 0
+	local templatesPlaced, unspacedRamps, endChecks = 0, 0, 0
 	local borderPairs, tailChunks = 0, 0
 	for seed = 1, 10 do
 		local make = terrainWorld(seed)
 		local n = make.n
 		local stepMax = Terrain.stepMax(make)
+		local rise = make.params.terrain.rise
 		local layouts: { [string]: any } = {}
 		for cz = 0, WORLD_CHUNKS - 1 do
 			for cx = 0, WORLD_CHUNKS - 1 do
@@ -55,6 +69,8 @@ H.test("terrain stays off chunk borders and ramps keep clear ends (D63, R5)", fu
 			for cx = 0, WORLD_CHUNKS - 1 do
 				local layout = layouts[cx .. "," .. cz]
 				local where = "seed " .. seed .. " chunk " .. cx .. "," .. cz
+				templatesPlaced += #layout.templates
+				unspacedRamps += layout.rampsUnspaced
 				-- (a) borders agree and are flat, E (incl. wrap) and S.
 				local east = layouts[((cx + 1) % WORLD_CHUNKS) .. "," .. cz]
 				local south = layouts[cx .. "," .. ((cz + 1) % WORLD_CHUNKS)]
@@ -85,6 +101,39 @@ H.test("terrain stays off chunk borders and ramps keep clear ends (D63, R5)", fu
 					local ramp = layout.ramp[index]
 					if ramp ~= nil then
 						totalRamps += 1
+						-- One rise per ramp (no 8-stud plateau-to-sunken ramp).
+						H.ok(
+							ramp.highY - ramp.lowY <= rise,
+							where
+								.. " ramp "
+								.. i
+								.. ","
+								.. j
+								.. " bridges "
+								.. (ramp.highY - ramp.lowY)
+						)
+						H.ok(
+							not layout.templateCell[index],
+							where .. " ramp " .. i .. "," .. j .. " stands on a template"
+						)
+						-- Neither end of a ramp opens onto a template cell.
+						for _, end_ in ipairs(rampEnds(ramp, i, j)) do
+							if end_[1] >= 1 and end_[2] >= 1 and end_[1] <= n and end_[2] <= n then
+								endChecks += 1
+								H.ok(
+									not layout.templateCell[end_[1] + (end_[2] - 1) * n],
+									where
+										.. " ramp "
+										.. i
+										.. ","
+										.. j
+										.. " ends on template cell "
+										.. end_[1]
+										.. ","
+										.. end_[2]
+								)
+							end
+						end
 						-- (b) no ramp on the ring.
 						H.ok(not ring, where .. " ramp on ring cell " .. i .. "," .. j)
 						-- (c) the low end is neither a ramp nor solid.
@@ -136,10 +185,13 @@ H.test("terrain stays off chunk borders and ramps keep clear ends (D63, R5)", fu
 	end
 	print(
 		string.format(
-			"  [seams] 10 seeds x %d chunks: %d border cell pairs, %d ramps, %d cells (%.1f%% plateau, %.1f%% sunken), %d border tails",
+			"  [seams] 10 seeds x %d chunks: %d border cell pairs, %d ramps (%d unspaced repair), %d templates, %d ramp end checks, %d cells (%.1f%% plateau, %.1f%% sunken), %d border tails",
 			WORLD_CHUNKS * WORLD_CHUNKS,
 			borderPairs,
 			totalRamps,
+			unspacedRamps,
+			templatesPlaced,
+			endChecks,
 			totalCells,
 			100 * plateauCells / totalCells,
 			100 * sunkenCells / totalCells,
@@ -148,5 +200,7 @@ H.test("terrain stays off chunk borders and ramps keep clear ends (D63, R5)", fu
 	)
 	-- (e) the terrain is really on.
 	H.ok(totalRamps > 0, "at least one ramp over the sweep")
+	-- Level 0's template config is on, so templates really compete for ramp ends.
+	H.ok(templatesPlaced > 0, "at least one template placed over the sweep")
 	H.ok(plateauCells > 0 and sunkenCells > 0, "plateaus and sunken areas both occur")
 end)

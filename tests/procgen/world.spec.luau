@@ -118,7 +118,7 @@ local function terrainRegions(layout: any): ({ { number } }, { [number]: number 
 end
 
 H.test("ramps are sparse: per region boundary, spaced, still connected", function()
-	local totalRamps = 0
+	local totalRamps, totalUnspaced = 0, 0
 	for seed = 1, 10 do
 		local config = clone(Level0)
 		config.world.worldSizeChunks = 3
@@ -183,11 +183,16 @@ H.test("ramps are sparse: per region boundary, spaced, still connected", functio
 						where .. ": boundary " .. key .. " has " .. #entry.cells .. " ramps"
 					)
 				end
-				-- The connectivity repair guarantees one ramp per unjoined component and
-				-- does not enforce spacing for it, so a chunk may hold at most one close
-				-- pair per repaired ramp (the ring rule leaves more of the joining to the
-				-- repair); everything the terrain pass places obeys the spacing.
-				local closePairs = 0
+				-- Strict spacing: two ramps of one region may stand closer than
+				-- rampSpacing only when one of them is a counted unspaced repair ramp
+				-- (the connectivity repair's guaranteed ramp, taken only when no spaced
+				-- face could join the component).
+				local unspaced = 0
+				for _ in pairs(layout.unspacedRamps) do
+					unspaced += 1
+				end
+				H.eq(unspaced, layout.rampsUnspaced, where .. ": unspaced ramps are all counted")
+				totalUnspaced += unspaced
 				for region, list in pairs(byRegion) do
 					maxPerRegion = math.max(maxPerRegion, #list)
 					for a = 1, #list do
@@ -195,15 +200,17 @@ H.test("ramps are sparse: per region boundary, spaced, still connected", functio
 							local apart = math.abs(list[a][1] - list[b][1])
 								+ math.abs(list[a][2] - list[b][2])
 							if apart < spacing then
-								closePairs += 1
+								local indexA = list[a][1] + (list[a][2] - 1) * n
+								local indexB = list[b][1] + (list[b][2] - 1) * n
 								H.ok(
-									closePairs <= layout.rampsRepaired,
+									layout.unspacedRamps[indexA] == true
+										or layout.unspacedRamps[indexB] == true,
 									where
 										.. ": two ramps "
 										.. apart
 										.. " cells apart in one region of "
 										.. #regions[region]
-										.. " beyond the repaired ramps"
+										.. ", neither a counted unspaced repair ramp"
 								)
 							end
 						end
@@ -263,6 +270,12 @@ H.test("ramps are sparse: per region boundary, spaced, still connected", functio
 			)
 		)
 	end
-	print(string.format("  [ramps] total: %d ramps (was 733 with per-face rolls)", totalRamps))
+	print(
+		string.format(
+			"  [ramps] total: %d ramps (was 733 with per-face rolls), %d unspaced repair ramps",
+			totalRamps,
+			totalUnspaced
+		)
+	)
 	H.ok(totalRamps < 733 / 2, "ramps are well below the per-face baseline")
 end)

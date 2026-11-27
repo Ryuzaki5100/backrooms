@@ -66,6 +66,18 @@ function Terrain.terrainAt(make: any, gx: number, gz: number): number
 	local shares = make.terrainShares or { plateau = 0, sunken = 0 }
 	local level = terrain.rise or DEFAULTS.rise
 	if roll < shares.sunken then
+		-- A sunken zone beside a plateau zone would only be enterable over an
+		-- 8-stud face, which `tryRamp` refuses (one rise per ramp), and the
+		-- D63 ring is flat so it cannot host the ramp either: such a zone stays
+		-- flat instead of becoming an unreachable pit.
+		for _, step in ipairs({ { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
+			local nx = math.floor(Common.canonical(make, x + step[1] * span) / span)
+			local nz = math.floor(Common.canonical(make, z + step[2] * span) / span)
+			local other = Common.hash01(make.seed, "terrain", nx, nz)
+			if other >= shares.sunken and other < shares.sunken + shares.plateau then
+				return 0
+			end
+		end
 		return -level
 	elseif roll < shares.sunken + shares.plateau then
 		return level
@@ -116,7 +128,8 @@ end
 
 -- The one ramp rule (ADR 0029, shared by `apply` and the connectivity repair):
 -- a ramp stands on the HIGH side of a boundary, in a cell that is free of ramp,
--- column, template and hanging wall, and only when the plateau continues at the
+-- column, template and hanging wall, bridges at most one `terrain.rise`, neither
+-- of its two end cells is a template cell, and only when the plateau continues at the
 -- same level on the far side as open floor (`dir` points towards the high end,
 -- so the cell beyond is at +dir along `axis`). Returns whether the ramp was placed; the
 -- boundary face's sealed flag is the caller's business.
@@ -134,6 +147,12 @@ function Terrain.tryRamp(
 	if i < 1 or j < 1 or i > n or j > n then
 		return false
 	end
+	if highY - lowY > ((make.params.terrain and make.params.terrain.rise) or DEFAULTS.rise) then
+		-- One ramp bridges at most one rise: a plateau beside a sunken area would
+		-- need a ramp twice as steep as the others, so that face stays a sealed
+		-- retaining edge.
+		return false
+	end
 	if i == 1 or j == 1 or i == n or j == n then
 		-- D63: the ring is flat and belongs to both chunks of a border, so no ramp
 		-- stands on it (its high end would open onto a cell this chunk cannot see).
@@ -146,7 +165,11 @@ function Terrain.tryRamp(
 	local lowJ = if axis == "z" then j - dir else j
 	if lowI >= 1 and lowJ >= 1 and lowI <= n and lowJ <= n then
 		local lowIndex = Layout.index(n, lowI, lowJ)
-		if layout.ramp[lowIndex] ~= nil or layout.solid[lowIndex] then
+		if
+			layout.ramp[lowIndex] ~= nil
+			or layout.solid[lowIndex]
+			or layout.templateCell[lowIndex]
+		then
 			return false
 		end
 	end
@@ -172,9 +195,12 @@ function Terrain.tryRamp(
 		and beyondJ >= 1
 		and beyondI <= n
 		and beyondJ <= n
-		and layout.solid[Layout.index(n, beyondI, beyondJ)]
+		and (
+			layout.solid[Layout.index(n, beyondI, beyondJ)]
+			or layout.templateCell[Layout.index(n, beyondI, beyondJ)]
+		)
 	then
-		-- ...or in a wall: the high end must open onto floor.
+		-- ...or in a wall or a set piece: the high end must open onto floor.
 		return false
 	end
 	layout.ramp[index] = { axis = axis, dir = dir, lowY = lowY, highY = highY }

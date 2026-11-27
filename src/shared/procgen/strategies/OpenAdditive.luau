@@ -560,17 +560,21 @@ local function repairRamps(make: any, layout: any, stepMax: number): number
 	end
 
 	-- Whether a ramp on candidate `c` would keep `terrain.rampSpacing` cells
-	-- (Manhattan) from every ramp already in the chunk.
+	-- (Manhattan) from every ramp already standing on the same high floor (the
+	-- chunk's ramps of the same level are a superset of the same high region's,
+	-- so a clear spot is clear of that region's ramps too; Terrain.farFrom is the
+	-- one distance rule).
 	local function clearOfRamps(c: any): boolean
-		local hi, hj = cellOf(n, highOf(c))
-		local spacing = Terrain.rampSpacing(make)
+		local high = highOf(c)
+		local hi, hj = cellOf(n, high)
+		local others: { { number } } = {}
 		for other in pairs(layout.ramp) do
-			local oi, oj = cellOf(n, other)
-			if math.abs(oi - hi) + math.abs(oj - hj) < spacing then
-				return false
+			if layout.floorY[other] == layout.floorY[high] then
+				local oi, oj = cellOf(n, other)
+				table.insert(others, { oi, oj })
 			end
 		end
-		return true
+		return Terrain.farFrom(others, hi, hj, Terrain.rampSpacing(make))
 	end
 
 	local function allReached(seen: { [number]: boolean }, cells: { [number]: boolean }): boolean
@@ -608,7 +612,8 @@ local function repairRamps(make: any, layout: any, stepMax: number): number
 			local scrap = comp.size < Terrain.rampSpacing(make) ^ 2
 			for pass = 1, if scrap then 1 else 2 do
 				for _, c in ipairs(list) do
-					if pass == 2 or clearOfRamps(c) then
+					local spaced = clearOfRamps(c)
+					if pass == 2 or spaced then
 						if
 							tryCandidate(c, function(g: any): boolean
 								local seen = WalkGraph.reachableFrom(g, mainRep)
@@ -618,6 +623,12 @@ local function repairRamps(make: any, layout: any, stepMax: number): number
 							joined = true
 							joinedHigh = highOf(c)
 							added += 1
+							if not spaced then
+								-- No spaced face could join this component: the guaranteed
+								-- ramp stands closer than rampSpacing and is counted.
+								layout.rampsUnspaced += 1
+								layout.unspacedRamps[highOf(c)] = true
+							end
 							break
 						end
 					end
@@ -893,6 +904,11 @@ function OpenAdditive.layout(make: any, cx: number, cz: number, options: any?): 
 	local opts = options or {}
 	local n, cell = make.n, make.cell
 	local layout = Layout.new(cx, cz, n, cell)
+	-- Repair ramps placed closer than `terrain.rampSpacing` to another ramp of
+	-- their level because no spaced face could join the component (count, and the
+	-- set of their cells keyed by cell index).
+	layout.rampsUnspaced = 0
+	layout.unspacedRamps = {}
 	local originX = cx * n
 	local originZ = cz * n
 
