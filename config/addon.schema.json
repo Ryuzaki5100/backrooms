@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://noclip.local/schema/addon.json",
+  "title": "Level add-on",
+  "$comment": "Validated by tools/Schema.luau. The patch is checked structurally by Overlay.apply and, once merged, by config/schema.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "version", "title", "patch"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$", "maxLength": 48 },
+    "version": { "type": "integer", "minimum": 1 },
+    "enabled": { "type": "boolean" },
+    "order": { "type": "number" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "source": { "type": "string", "minLength": 1 },
+    "patch": { "type": "object" }
+  }
+}

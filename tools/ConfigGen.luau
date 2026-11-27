@@ -4,6 +4,9 @@
 -- file is committed and compared byte-for-byte in `--check` mode: object keys
 -- are sorted, arrays keep their order, nulls are omitted (Luau has no null).
 
+local Schema = require("./Schema")
+local Overlay = require("../src/shared/procgen/level/Overlay")
+
 local ConfigGen = {}
 
 local function isArray(value: any): boolean
@@ -96,6 +99,57 @@ function ConfigGen.render(config: any, sourcePath: string): string
 		"",
 	}, "\n")
 	return header .. "return " .. emit(config, 0) .. "\n"
+end
+
+-- Validates every add-on, applies the enabled ones to `base` and validates the
+-- merged config. Returns the merged config (nil on failure), the applied list
+-- and a list of error strings, each prefixed with `label`.
+function ConfigGen.resolve(
+	schema: any,
+	addonSchema: any,
+	base: any,
+	addons: { any },
+	label: string,
+	enabled: { [string]: boolean }?
+): (any, { Overlay.Applied }, { string })
+	local errors: { string } = {}
+	for index, addon in ipairs(addons) do
+		for _, message in ipairs(Schema.validate(addonSchema, addon)) do
+			table.insert(errors, `{label} add-on #{index} {message}`)
+		end
+	end
+	if #errors > 0 then
+		return nil, {}, errors
+	end
+
+	local ok, merged, applied = pcall(Overlay.apply, base, addons, enabled)
+	if not ok then
+		return nil, {}, { `{label} {tostring(merged)}` }
+	end
+
+	for _, message in ipairs(Schema.validate(schema, merged)) do
+		table.insert(errors, `{label} merged {message}`)
+	end
+	for _, message in ipairs(Schema.checkRelations(merged)) do
+		table.insert(errors, `{label} merged {message}`)
+	end
+	if #errors > 0 then
+		return nil, applied, errors
+	end
+	return merged, applied, errors
+end
+
+-- The `<Module>_Addons` file: the unmerged base plus every add-on file, so the
+-- runtime can re-merge with different toggles.
+function ConfigGen.renderAddons(base: any, addons: { any }, sourcePath: string): string
+	local header = table.concat({
+		"--!strict",
+		"--",
+		"-- Generated from " .. sourcePath .. " (and its addons/ directory) by",
+		"-- scripts/gen-config.luau. Do not edit by hand.",
+		"",
+	}, "\n")
+	return header .. "return " .. emit({ base = base, addons = addons }, 0) .. "\n"
 end
 
 return ConfigGen

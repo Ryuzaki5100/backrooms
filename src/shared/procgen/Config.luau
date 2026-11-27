@@ -53,7 +53,7 @@ local Config = {}
 -- Fingerprint of the generation-relevant projection of a config. Display text
 -- and style are excluded on purpose: rewriting a description must not change a
 -- layout's identity (ADR 0009 Q4).
-function Config.fingerprint(config: any): string
+function Config.fingerprint(config: any, applied: { { id: string, version: number } }?): string
 	local parts: { string } = { tostring(config.schema), tostring(config.id) }
 	local generate = config.generate or {}
 	local regions = generate.regions or {}
@@ -162,6 +162,16 @@ function Config.fingerprint(config: any): string
 				outcome.predicate or "",
 			}, ":")
 		end
+	end
+
+	-- Active add-ons change the merged config, so they are part of its identity.
+	-- Appended only when present: a level without add-ons keeps its old string.
+	if applied ~= nil and #applied > 0 then
+		local labels: { string } = {}
+		for _, entry in ipairs(applied) do
+			table.insert(labels, entry.id .. "@" .. tostring(entry.version))
+		end
+		parts[#parts + 1] = "addons:" .. table.concat(labels, ",")
 	end
 
 	return Hash.of(table.concat(parts, "|"))

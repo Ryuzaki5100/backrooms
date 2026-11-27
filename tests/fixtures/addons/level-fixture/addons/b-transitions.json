@@ -1,0 +1,24 @@
+{
+  "id": "b-transitions",
+  "version": 3,
+  "order": 20,
+  "title": "Drop the vent, add a new gate",
+  "patch": {
+    "transitions": {
+      "$remove": ["l0.vent"],
+      "$append": [
+        {
+          "id": "l0.fixture-gate",
+          "gate": "trigger:fixture_gate",
+          "resolve": "seed",
+          "outcomes": [{ "kind": "void", "weight": 100 }]
+        }
+      ]
+    },
+    "props": {
+      "$append": [
+        { "asset": "procedural:fixture_prop", "weight": 3, "anchor": "wall", "access": "walk" }
+      ]
+    }
+  }
+}

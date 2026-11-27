@@ -1,0 +1,16 @@
+{
+  "id": "c-disabled",
+  "version": 1,
+  "enabled": false,
+  "order": 30,
+  "title": "Disabled by default: replaces the prop list and deletes hazards",
+  "patch": {
+    "props": {
+      "$replace": [
+        { "asset": "procedural:wall_outlet", "weight": 1, "anchor": "wall", "access": "walk" }
+      ]
+    },
+    "hazards": { "$delete": true },
+    "lighting": { "bloom": 0.9 }
+  }
+}
