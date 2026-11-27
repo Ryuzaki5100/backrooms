@@ -10,6 +10,9 @@
       "Procgen": {
         "$path": "src/server/procgen"
       },
+      "Level": {
+        "$path": "src/server/level"
+      },
       "Debug": {
         "$path": "src/server/debug"
       }
@@ -32,6 +35,9 @@
         "$className": "StarterPlayerScripts",
         "NoclipClient": {
           "$path": "src/client/NoclipClient.client.luau"
+        },
+        "ClientLevel": {
+          "$path": "src/client/level/ClientLevel.client.luau"
         }
       }
     },
