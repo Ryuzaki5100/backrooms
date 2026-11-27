@@ -15,6 +15,7 @@ local Structures = if script ~= nil
 	then require(script.Parent.Structures)
 	else require("./Structures")
 local Template = if script ~= nil then require(script.Parent.Template) else require("./Template")
+local World = if script ~= nil then require(script.Parent.Parent.World) else require("../World")
 
 local Features = {}
 
@@ -44,6 +45,8 @@ end
 local TERRAIN_DEFAULT_RISE = 4
 local TERRAIN_DEFAULT_STEP_MAX = 1
 local TERRAIN_DEFAULT_MIN_HEADROOM = 9
+-- Cells per ceiling/terrain block (OpenAdditive.DEFAULTS.block; not configurable).
+local BLOCK_CELLS = 6
 -- Review R1: a player crouching under a hanging wall needs this much clear air.
 local MIN_HANGING_CLEARANCE = 6
 
@@ -106,6 +109,33 @@ local function validateCeiling(problems: { string }, config: any, terrain: any, 
 		end
 		if ceiling.zoneBlocks ~= nil and not isPositiveInteger(ceiling.zoneBlocks) then
 			table.insert(problems, prefix .. ".zoneBlocks: must be a positive integer")
+		end
+		-- On a wrapping world a zone must tile the period, or the last zone is cut
+		-- at the seam and the two sides of the wrap disagree about its band.
+		local boundary = (config.world and config.world.boundaryMode) or "wrap"
+		if boundary == "wrap" and isPositiveInteger(ceiling.zoneBlocks) then
+			local ok, size = pcall(World.resolve, config)
+			if ok then
+				local chunkCells = (params.chunkCells or (config.world and config.world.chunkCells))
+					or 18
+				local blocksPerAxis = size.chunks * chunkCells / BLOCK_CELLS
+				if blocksPerAxis % ceiling.zoneBlocks ~= 0 then
+					table.insert(
+						problems,
+						prefix
+							.. ".zoneBlocks: must divide the blocks per axis of a wrapping world ("
+							.. blocksPerAxis
+							.. " blocks = "
+							.. size.chunks
+							.. " chunks x "
+							.. chunkCells
+							.. " cells / "
+							.. BLOCK_CELLS
+							.. "), got "
+							.. ceiling.zoneBlocks
+					)
+				end
+			end
 		end
 		local bands = ceiling.bands
 		if type(bands) ~= "table" or #bands == 0 then

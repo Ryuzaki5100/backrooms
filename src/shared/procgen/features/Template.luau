@@ -54,9 +54,36 @@ function Template.enabled(make: any): boolean
 	return type(specs) == "table" and #specs > 0
 end
 
+-- Cells a footprint may not cover: every ramp cell and both end cells of every
+-- ramp (the high end at +dir and the low end at -dir), so a set piece never sits
+-- at the mouth of a ramp. Terrain runs before this pass, so the ramps are known.
+local function rampEnds(layout: any): { [number]: boolean }
+	local n = layout.n
+	local blocked: { [number]: boolean } = {}
+	for index, ramp in pairs(layout.ramp) do
+		blocked[index] = true
+		local i, j = (index - 1) % n + 1, (index - 1) // n + 1
+		for _, sign in ipairs({ 1, -1 }) do
+			local ei = if ramp.axis == "x" then i + sign * ramp.dir else i
+			local ej = if ramp.axis == "z" then j + sign * ramp.dir else j
+			if ei >= 1 and ej >= 1 and ei <= n and ej <= n then
+				blocked[Layout.index(n, ei, ej)] = true
+			end
+		end
+	end
+	return blocked
+end
+
 -- A footprint is placeable when every cell is open floor at one level, with no
--- wall, pillar or hanging wall inside it.
-local function fits(layout: any, i: number, j: number, w: number, d: number): boolean
+-- wall, pillar, hanging wall or ramp end inside it.
+local function fits(
+	layout: any,
+	blocked: { [number]: boolean },
+	i: number,
+	j: number,
+	w: number,
+	d: number
+): boolean
 	local n = layout.n
 	if w < 1 or d < 1 then
 		return false
@@ -75,7 +102,7 @@ local function fits(layout: any, i: number, j: number, w: number, d: number): bo
 			if layout.column[index] or layout.hangE[index] or layout.hangS[index] then
 				return false
 			end
-			if layout.ramp[index] ~= nil then
+			if layout.ramp[index] ~= nil or blocked[index] then
 				return false
 			end
 			local floor = layout.floorY[index] or 0
@@ -148,6 +175,7 @@ function Template.apply(make: any, layout: any): ()
 	local total = n * n
 	local chunkX = math.floor(Common.canonical(make, layout.cx * n) / n)
 	local chunkZ = math.floor(Common.canonical(make, layout.cz * n) / n)
+	local blocked = rampEnds(layout)
 
 	for specIndex, spec in ipairs(specs) do
 		local w = (spec.footprint and spec.footprint.w) or 0
@@ -172,7 +200,7 @@ function Template.apply(make: any, layout: any): ()
 			local cell = (start + step) % total
 			local i = cell % n + 1
 			local j = math.floor(cell / n) + 1
-			if fits(layout, i, j, w, d) and spaced(layout, i, j, w, d, spacing) then
+			if fits(layout, blocked, i, j, w, d) and spaced(layout, i, j, w, d, spacing) then
 				for jj = j, j + d - 1 do
 					for ii = i, i + w - 1 do
 						layout.templateCell[Layout.index(n, ii, jj)] = true
