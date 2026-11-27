@@ -1,0 +1,11 @@
+{
+  "id": "a-fog",
+  "version": 1,
+  "order": 10,
+  "title": "Heavier fog and a dimmer ambient",
+  "source": "60-lore/levels/level-0.md",
+  "patch": {
+    "lighting": { "fogEnd": 40, "ambient": "#201c10" },
+    "generate": { "loops": 6 }
+  }
+}
