@@ -610,7 +610,13 @@ function GeometryAudit.run(opts: Options?): Report
 	end
 
 	if #edgeLengths > 0 then
-		report.streamEdge.min = math.min(table.unpack(edgeLengths))
+		local shortest = math.huge
+		for _, length in ipairs(edgeLengths) do
+			if length < shortest then
+				shortest = length
+			end
+		end
+		report.streamEdge.min = shortest
 		report.streamEdge.median = median(edgeLengths)
 	end
 	report.seconds = os.clock() - started
