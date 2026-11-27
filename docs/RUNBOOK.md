@@ -317,6 +317,38 @@ edits), `execute_luau`, `start_stop_play`, `get_console_output`,
 variant of the one-server rule: `rojo serve`, `devenv up` and `devenv test`
 cannot all be running at once.
 
+## Geometry audit
+
+`src/server/debug/GeometryAudit.luau` (`ServerScriptService.Debug.GeometryAudit`)
+ray-casts the real streamed world in a **Play server** and finds unwanted gaps,
+missing floors or ceilings and bad ramps on whatever seed is running.
+
+```lua
+-- through Studio MCP, Server datamodel, during Play
+local Audit = require(game.ServerScriptService.Debug.GeometryAudit)
+print(Audit.selfTest().summary)          -- 3 PASS lines: closed, broken, hole allowed
+print(Audit.format(Audit.run()))         -- whole loaded world
+```
+
+Or set the Workspace attribute `NoclipAudit = true` (Studio only): `AuditRunner`
+audits around each player, prints the report and writes a one-liner to the
+attribute `NoclipAuditResult`. `NoclipAuditMarkers = true` also drops red (defect)
+and green (opening) balls into `Workspace.NoclipAudit`.
+
+Reading the report: `ok` means `gaps`, `noFloor`, `noCeiling` and ramp failures are
+all 0. A **gap** is a sight line from standing eye height that leaves the loaded
+world. A **stream-edge** sightline is a near-horizontal ray that only reached the
+border of the loaded chunks; it is information, not a defect (the numbers are
+count, shortest and median length). Ramp failures are `sideOpen`, `endStep` and
+`lowHeadroom`.
+
+An **opening** is a part whose render spec has an `opening` field (`hole`,
+`window`, ...). `Build` tags it `NoclipOpening` and sets the attribute of the same
+name. The audit sees through it, and an escape that crosses its volume is counted
+under `openings`, not `gaps`. Nothing emits openings yet.
+
+---
+
 ## 12. Reference
 
 ```sh

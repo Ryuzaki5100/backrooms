@@ -11,6 +11,11 @@
 -- modelled here as a solid box over its authored envelope (depth below the floor
 -- plane to roof top).
 --
+-- Declared openings (task 0032): a render spec carrying an `opening` field is an
+-- allowed opening (a hole, a window), not geometry. It is left out of the scene
+-- and counted; none exist today, so the closure still demands 0 escapes. The
+-- Studio counterpart over real instances is `server/debug/GeometryAudit`.
+--
 -- Yaw: a wedge with yaw 0 rises towards +Z; `Build.apply` rotates by
 -- `CFrame.Angles(0, math.rad(yaw), 0)`, so yaw 90 rises towards +X, -90 towards
 -- -X and 180 towards -Z (the mapping `ChunkRenderer.ramps` documents).
@@ -235,6 +240,7 @@ type Scene = {
 	cellsZ: number,
 	stamp: number,
 	span: number,
+	openings: number,
 }
 
 local function bucketKey(scene: Scene, bx: number, bz: number): number
@@ -251,6 +257,7 @@ local function buildScene(make: any, layouts: { any }): Scene
 		cellsZ = cellsAxis,
 		stamp = 0,
 		span = span,
+		openings = 0,
 	}
 	local options = {
 		style = { budget = 9000 },
@@ -259,7 +266,10 @@ local function buildScene(make: any, layouts: { any }): Scene
 	}
 	for _, layout in ipairs(layouts) do
 		for _, part in ipairs(ChunkRenderer.describe(layout, options)) do
-			local solid = solidOf(part)
+			local solid = if part.opening ~= nil then nil else solidOf(part)
+			if part.opening ~= nil then
+				scene.openings += 1
+			end
 			if solid ~= nil then
 				table.insert(scene.solids, solid)
 				local id = #scene.solids
@@ -441,13 +451,14 @@ H.test("the world is closed: no sight line from an eye point leaves the geometry
 	local started = os.clock()
 	local dirs = directions()
 	H.eq(#dirs, 61, "12 azimuths x 5 elevations + up")
-	local totalEscapes, totalRays, totalEyes = 0, 0, 0
+	local totalEscapes, totalRays, totalEyes, totalOpenings = 0, 0, 0, 0
 	local reports: { string } = {}
 	for seed = 1, 5 do
 		local make = closedWorld(seed)
 		local layouts = layoutsOf(make)
 		local scene = buildScene(make, layouts)
 		local points = eyes(layouts)
+		totalOpenings += scene.openings
 		local escapes, inside = 0, 0
 		for _, eye in ipairs(points) do
 			if insideAny(scene, eye) then
@@ -494,6 +505,11 @@ H.test("the world is closed: no sight line from an eye point leaves the geometry
 			totalEscapes,
 			os.clock() - started
 		)
+	)
+	H.eq(
+		totalOpenings,
+		0,
+		"declared openings (none exist yet; escapes through one would be allowed)"
 	)
 	H.ok(totalEyes > 1000, "enough eye points: " .. totalEyes)
 	H.eq(totalEscapes, 0, "escaping rays; first: " .. table.concat(reports, " | "))

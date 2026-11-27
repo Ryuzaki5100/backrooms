@@ -12,6 +12,9 @@
       },
       "Level": {
         "$path": "src/server/level"
+      },
+      "Debug": {
+        "$path": "src/server/debug"
       }
     },
     "ReplicatedStorage": {
