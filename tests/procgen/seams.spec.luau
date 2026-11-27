@@ -54,6 +54,7 @@ H.test("terrain stays off chunk borders and ramps keep clear ends (D63, R5)", fu
 	local totalRamps, totalCells, plateauCells, sunkenCells = 0, 0, 0, 0
 	local templatesPlaced, unspacedRamps, endChecks = 0, 0, 0
 	local borderPairs, tailChunks = 0, 0
+	local structureCells = 0
 	for seed = 1, 10 do
 		local make = terrainWorld(seed)
 		local n = make.n
@@ -97,6 +98,28 @@ H.test("terrain stays off chunk borders and ramps keep clear ends (D63, R5)", fu
 					end
 					if ring then
 						H.eq(y, 0, where .. " ring cell " .. i .. "," .. j .. " is flat")
+					end
+					-- Structures never stand on a ramp or hang over a face onto one (#29).
+					if layout.column[index] or layout.hangE[index] or layout.hangS[index] then
+						structureCells += 1
+					end
+					if layout.ramp[index] ~= nil then
+						H.ok(
+							not (layout.column[index] or layout.hangE[index] or layout.hangS[index]),
+							where .. " structure on ramp cell " .. i .. "," .. j
+						)
+					end
+					if layout.hangE[index] and i < n then
+						H.ok(
+							layout.ramp[index + 1] == nil,
+							where .. " hangE onto ramp " .. i .. "," .. j
+						)
+					end
+					if layout.hangS[index] and j < n then
+						H.ok(
+							layout.ramp[index + n] == nil,
+							where .. " hangS onto ramp " .. i .. "," .. j
+						)
 					end
 					local ramp = layout.ramp[index]
 					if ramp ~= nil then
@@ -183,6 +206,12 @@ H.test("terrain stays off chunk borders and ramps keep clear ends (D63, R5)", fu
 			end
 		end
 	end
+	print(
+		string.format(
+			"  [seams] %d structure cells swept, 0 on or onto ramps (asserted)",
+			structureCells
+		)
+	)
 	print(
 		string.format(
 			"  [seams] 10 seeds x %d chunks: %d border cell pairs, %d ramps (%d unspaced repair), %d templates, %d ramp end checks, %d cells (%.1f%% plateau, %.1f%% sunken), %d border tails",
