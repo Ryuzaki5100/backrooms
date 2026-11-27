@@ -46,10 +46,22 @@ function Terrain.terrainAt(make: any, gx: number, gz: number): number
 	if terrain == nil then
 		return 0
 	end
+	local x = Common.canonical(make, gx)
+	local z = Common.canonical(make, gz)
+	-- D63 ring rule (ADR 0031): vertical terrain stays off a chunk's outer ring of
+	-- cells. This is a pure world function, so the two chunks sharing a border both
+	-- see flat floor (0) on their own side without reading each other, and a rise
+	-- can never straddle a chunk seam.
+	local n = make.n
+	local li = x % n
+	local lj = z % n
+	if li == 0 or li == n - 1 or lj == 0 or lj == n - 1 then
+		return 0
+	end
 	local blocks = terrain.blocksPerZone or 2
 	local span = make.block * blocks
-	local bx = math.floor(Common.canonical(make, gx) / span)
-	local bz = math.floor(Common.canonical(make, gz) / span)
+	local bx = math.floor(x / span)
+	local bz = math.floor(z / span)
 	local roll = Common.hash01(make.seed, "terrain", bx, bz)
 	local shares = make.terrainShares or { plateau = 0, sunken = 0 }
 	local level = terrain.rise or DEFAULTS.rise
@@ -122,7 +134,22 @@ function Terrain.tryRamp(
 	if i < 1 or j < 1 or i > n or j > n then
 		return false
 	end
+	if i == 1 or j == 1 or i == n or j == n then
+		-- D63: the ring is flat and belongs to both chunks of a border, so no ramp
+		-- stands on it (its high end would open onto a cell this chunk cannot see).
+		return false
+	end
 	local index = Layout.index(n, i, j)
+	-- The low end (-dir) must not open onto another ramp or a wall (review R5).
+	-- Outside the chunk the ring rule already makes it flat open floor.
+	local lowI = if axis == "x" then i - dir else i
+	local lowJ = if axis == "z" then j - dir else j
+	if lowI >= 1 and lowJ >= 1 and lowI <= n and lowJ <= n then
+		local lowIndex = Layout.index(n, lowI, lowJ)
+		if layout.ramp[lowIndex] ~= nil or layout.solid[lowIndex] then
+			return false
+		end
+	end
 	if
 		layout.ramp[index] ~= nil
 		or layout.column[index]
@@ -261,7 +288,9 @@ function Terrain.apply(make: any, layout: any): ()
 		local rampI = if highIsHere then i else oi
 		local rampJ = if highIsHere then j else oj
 		if rampI < 1 or rampJ < 1 or rampI > n or rampJ > n then
-			return -- the high cell is in the neighbour chunk: it decides this face
+			-- Unreachable for a rise since the D63 ring rule (the ring is always flat,
+			-- so the high cell of a rise is never outside the chunk); kept as a guard.
+			return
 		end
 		local highIndex = Layout.index(n, rampI, rampJ)
 		local lowI = if highIsHere then oi else i

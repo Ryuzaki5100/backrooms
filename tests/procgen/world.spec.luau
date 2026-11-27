@@ -183,20 +183,29 @@ H.test("ramps are sparse: per region boundary, spaced, still connected", functio
 						where .. ": boundary " .. key .. " has " .. #entry.cells .. " ramps"
 					)
 				end
+				-- The connectivity repair guarantees one ramp per unjoined component and
+				-- does not enforce spacing for it, so a chunk may hold at most one close
+				-- pair per repaired ramp (the ring rule leaves more of the joining to the
+				-- repair); everything the terrain pass places obeys the spacing.
+				local closePairs = 0
 				for region, list in pairs(byRegion) do
 					maxPerRegion = math.max(maxPerRegion, #list)
 					for a = 1, #list do
 						for b = a + 1, #list do
 							local apart = math.abs(list[a][1] - list[b][1])
 								+ math.abs(list[a][2] - list[b][2])
-							H.ok(
-								apart >= spacing,
-								where
-									.. ": two ramps "
-									.. apart
-									.. " cells apart in one region of "
-									.. #regions[region]
-							)
+							if apart < spacing then
+								closePairs += 1
+								H.ok(
+									closePairs <= layout.rampsRepaired,
+									where
+										.. ": two ramps "
+										.. apart
+										.. " cells apart in one region of "
+										.. #regions[region]
+										.. " beyond the repaired ramps"
+								)
+							end
 						end
 					end
 				end
