@@ -45,9 +45,16 @@ function Structures.apply(make: any, layout: any): ()
 			local bx = math.floor(Common.canonical(make, gx) / make.block)
 			local bz = math.floor(Common.canonical(make, gz) / make.block)
 			local roll = Common.hash01(make.seed, "feature", bx, bz)
+			-- Mirror of Terrain.tryRamp's structure checks (terrain runs first): all
+			-- draws below stay as they are, a ramp cell or a face onto one just
+			-- never receives the result. Ramps are off the ring, so a neighbour
+			-- outside the chunk is never a ramp.
+			local onRamp = layout.ramp[index] ~= nil
+			local rampEast = i < n and layout.ramp[Layout.index(n, i + 1, j)] ~= nil
+			local rampSouth = j < n and layout.ramp[Layout.index(n, i, j + 1)] ~= nil
 			if roll < pillarShare and not layout.solid[index] then
 				local spacing = pillar.spacing or DEFAULTS.pillar.spacing
-				if (i - 1) % spacing == 0 and (j - 1) % spacing == 0 then
+				if (i - 1) % spacing == 0 and (j - 1) % spacing == 0 and not onRamp then
 					layout.column[index] = true
 				end
 				if layout.columnStuds == nil then
@@ -59,7 +66,9 @@ function Structures.apply(make: any, layout: any): ()
 				end
 				local density = hang.density or DEFAULTS.hang.density
 				if
-					not layout.sealedE[index]
+					not onRamp
+					and not rampEast
+					and not layout.sealedE[index]
 					and Common.hash01(
 							make.seed,
 							"hang:x",
@@ -71,7 +80,9 @@ function Structures.apply(make: any, layout: any): ()
 					layout.hangE[index] = true
 				end
 				if
-					not layout.sealedS[index]
+					not onRamp
+					and not rampSouth
+					and not layout.sealedS[index]
 					and Common.hash01(
 							make.seed,
 							"hang:z",
