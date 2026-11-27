@@ -2,8 +2,8 @@
 
 -- Thin Roblox layer: turn a geometry description into Parts.
 --
--- All geometry decisions live in `ReplicatedStorage.Procgen.Geometry`; this
--- module only applies them. Keeping it dumb is what lets the pure layer be
+-- All geometry decisions live in the pure layer (`ReplicatedStorage.Procgen.grid`,
+-- chiefly `ChunkRenderer`); this module only applies them. Keeping it dumb is what lets the pure layer be
 -- tested under Lune and hashed across Lune and Studio.
 --
 -- Two entry points share one per-spec instancing helper: `apply` builds a whole

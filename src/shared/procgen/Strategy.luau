@@ -6,21 +6,26 @@
 -- "which level is this"; it asks "which strategy", and the strategy gets its
 -- parameters from the same config table.
 --
--- `rooms_and_corridors` is the legacy pipeline (Macro + Embedding) kept behind
--- this interface so it can be proved unchanged: same config, same bytes.
+-- `open_additive` is the only live strategy. `rooms_and_corridors` was the
+-- legacy node pipeline (Macro + Embedding); it was retired by ADR 0032 A2 and
+-- version history keeps it. The registry slot stays reserved for a future graph
+-- strategy, so selecting it fails with a readable error instead of "unknown".
 
 local Strategy = {}
 
 local REGISTRY: { [string]: any } = {
 	rooms_and_corridors = function()
-		return require("./strategies/RoomsAndCorridors")
+		error(
+			"Strategy: rooms_and_corridors is retired (ADR 0032 A2); the name is reserved for a future graph strategy",
+			0
+		)
 	end,
 	open_additive = function()
 		return require("./strategies/OpenAdditive")
 	end,
 }
 
-local DEFAULT = "rooms_and_corridors"
+local DEFAULT = "open_additive"
 
 local Features = if script ~= nil
 	then require(script.Parent.features.Features)
@@ -54,20 +59,16 @@ function Strategy.module(name: string): any
 	return loader()
 end
 
--- Dispatch. A strategy returns either a node plan (rooms_and_corridors) or a
--- grid world object (open_additive); `Strategy.kind` says which.
+-- Dispatch. A strategy returns a grid world object; `Strategy.kind` names the
+-- shape of what it returns.
 function Strategy.build(config: any, seed: number, options: any?): any
 	local name = Strategy.nameOf(config)
 	local module = Strategy.module(name)
 	return module.build(config, seed, options)
 end
 
-function Strategy.kind(config: any): string
-	local name = Strategy.nameOf(config)
-	if name == "open_additive" then
-		return "grid"
-	end
-	return "plan"
+function Strategy.kind(_config: any): string
+	return "grid"
 end
 
 -- Validation with readable errors, run at load. JSON Schema cannot switch on the

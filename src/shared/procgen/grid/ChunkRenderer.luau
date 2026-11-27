@@ -16,8 +16,8 @@
 -- sunken area, a ramp side or an open rise never shows the sky box underneath.
 -- Mass is the same greedy rectangles as before: thicker, not more.
 --
--- Pure: emits the same part specs `Geometry` emits, plus `wedge = true` for
--- ramps, so `Build.apply` needs one new instance type.
+-- Pure: emits part specs (the retired node-pipeline `Geometry` module emitted
+-- the same shape), plus `wedge = true` for ramps, so `Build.apply` needs one new instance type.
 --
 -- Yaw is in DEGREES (`Build.apply` applies `math.rad(yaw)`). A wedge at yaw 0
 -- rises towards +Z; rotating by yaw turns +Z towards +X, so: axis z, dir +1 -> 0;

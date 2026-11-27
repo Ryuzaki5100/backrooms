@@ -2,9 +2,6 @@
 
 local H = require("../harness")
 local Strategy = require("../../src/shared/procgen/Strategy")
-local Macro = require("../../src/shared/procgen/Macro")
-local Embedding = require("../../src/shared/procgen/Embedding")
-local Plan = require("../../src/shared/procgen/Plan")
 local Level0 = require("../../src/config/levels/Level_0")
 
 local function clone(value: any): any
@@ -18,28 +15,23 @@ local function clone(value: any): any
 	return copy
 end
 
-H.test("the legacy strategy is byte-identical to calling the pipeline", function()
-	local config = clone(Level0)
-	config.strategy = { name = "rooms_and_corridors" }
-
-	local generate = config.generate
-	local direct = Embedding.embed(Macro.build(config, 42), {
-		loops = generate.loops,
-		loopShare = generate.loopShare,
-		loopPreference = generate.loopPreference,
-		connectivity = generate.connectivity,
-		openings = generate.openings,
-		exitSeparationShare = generate.exitSeparationShare,
-	})
-
-	H.eq(Plan.bytes(Strategy.build(config, 42)), Plan.bytes(direct), "same plan bytes")
-end)
-
-H.test("strategy name defaults to rooms_and_corridors", function()
+H.test("strategy name defaults to open_additive", function()
 	local config = clone(Level0)
 	config.strategy = nil
-	H.eq(Strategy.nameOf(config), "rooms_and_corridors")
-	H.eq(Strategy.kind(config), "plan")
+	H.eq(Strategy.nameOf(config), "open_additive")
+	H.eq(Strategy.kind(config), "grid")
+end)
+
+H.test("rooms_and_corridors is retired and fails with a readable error", function()
+	local config = clone(Level0)
+	config.strategy = { name = "rooms_and_corridors" }
+	local ok, err = pcall(Strategy.build, config, 42)
+	H.ok(not ok)
+	H.ok(string.find(tostring(err), "retired (ADR 0032 A2)", 1, true) ~= nil, tostring(err))
+	H.ok(
+		string.find(tostring(err), "reserved for a future graph strategy", 1, true) ~= nil,
+		tostring(err)
+	)
 end)
 
 H.test("an unknown strategy fails with a readable error", function()
