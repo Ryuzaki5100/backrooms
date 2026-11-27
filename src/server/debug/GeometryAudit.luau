@@ -7,7 +7,7 @@
 --
 --   * a defect: a gap (a sight line that leaves the loaded world through
 --     geometry), a cell without floor or ceiling, a ramp that does not meet its
---     floors or has no headroom;
+--     floors, is obstructed (`rampBlocked`) or has no headroom (`lowHeadroom`);
 --   * a declared opening: any part tagged `NoclipOpening` (Build sets the tag and
 --     the `NoclipOpening` attribute from `spec.opening`). Rays treat it as
 --     transparent, and an escape whose segment crosses its volume is allowed;
@@ -148,17 +148,38 @@ local function inOpeningColumn(volumes: { Volume }, x: number, z: number): boole
 	return false
 end
 
+-- Openings are found by walking the audited folder, not through
+-- CollectionService:GetTagged: a part is an opening when it carries the tag or
+-- the `NoclipOpening` attribute, wherever the folder is parented. The tag query
+-- is only consulted as a second source so a tag-only part is never missed.
 local function collectOpenings(folder: Instance): ({ Volume }, { [Instance]: boolean })
 	local volumes: { Volume } = {}
 	local set: { [Instance]: boolean } = {}
+	local function add(instance: Instance)
+		if set[instance] or not instance:IsA("BasePart") then
+			return
+		end
+		table.insert(volumes, {
+			inverse = instance.CFrame:Inverse(),
+			half = instance.Size / 2,
+			part = instance,
+		})
+		set[instance] = true
+	end
+	for _, instance in ipairs(folder:GetDescendants()) do
+		if
+			instance:IsA("BasePart")
+			and (
+				CollectionService:HasTag(instance, OPENING_TAG)
+				or instance:GetAttribute(OPENING_TAG) ~= nil
+			)
+		then
+			add(instance)
+		end
+	end
 	for _, instance in ipairs(CollectionService:GetTagged(OPENING_TAG)) do
-		if instance:IsA("BasePart") and instance:IsDescendantOf(folder) then
-			table.insert(volumes, {
-				inverse = instance.CFrame:Inverse(),
-				half = instance.Size / 2,
-				part = instance,
-			})
-			set[instance] = true
+		if instance:IsDescendantOf(folder) then
+			add(instance)
 		end
 	end
 	return volumes, set
@@ -205,7 +226,7 @@ end
 
 -- One ramp: side rays hit within a cell, both ends meet a floor, headroom.
 -- Geometry-agnostic about which end is high: it measures the surface.
-local function checkRamp(part: BasePart, params: RaycastParams): { Sample }
+local function checkRamp(part: BasePart, params: RaycastParams, folder: Instance): { Sample }
 	local failures: { Sample } = {}
 	local cf, size = part.CFrame, part.Size
 	local hy, hz = size.Y / 2, size.Z / 2
@@ -271,13 +292,51 @@ local function checkRamp(part: BasePart, params: RaycastParams): { Sample }
 	checkEnd("low", -highSign * (hz + 1), cy - hy)
 	checkEnd("high", highSign * (hz + 1), cy + hy)
 
-	-- Headroom at the middle and near the high end.
+	-- Obstructions: any other part standing in the space above the ramp surface
+	-- (a pillar in the middle of the stair). The footprint is shrunk a little so
+	-- side walls and floor slabs that only touch its boundary never count.
+	local blocker: BasePart? = nil
+	local boxHeight = size.Y + RAMP_HEADROOM
+	local boxCenter = Vector3.new(cf.Position.X, cy - hy + boxHeight / 2, cf.Position.Z)
+	local box = CFrame.new(boxCenter) * (cf - cf.Position)
+	local query = OverlapParams.new()
+	query.FilterType = Enum.RaycastFilterType.Include
+	query.FilterDescendantsInstances = { folder }
+	local footprint =
+		Vector3.new(math.max(size.X - 1, 0.5), boxHeight - 0.5, math.max(size.Z - 1, 0.5))
+	for _, other in ipairs(workspace:GetPartBoundsInBox(box, footprint, query)) do
+		if other ~= part then
+			-- Surface height under the other part's centre, clamped to the wedge.
+			local localZ = cf:PointToObjectSpace(other.Position).Z
+			local y = surfaceY(math.clamp(localZ, -hz, hz))
+			local bottom = other.Position.Y - other.Size.Y / 2
+			local top = other.Position.Y + other.Size.Y / 2
+			if top > y + 0.5 and bottom < y + RAMP_HEADROOM - 0.25 then
+				blocker = other
+				break
+			end
+		end
+	end
+	if blocker ~= nil then
+		fail("rampBlocked", blocker.Position, "blocked by " .. blocker.Name)
+		return failures
+	end
+
+	-- Headroom at the middle and near the high end. A sample whose down-ray does
+	-- not land on the ramp itself is skipped rather than measured from another part.
 	for _, z in ipairs({ 0, highSign * (hz - 1) }) do
 		local y = surfaceY(z)
 		local origin = world(z, y + 0.2)
-		local hit = workspace:Raycast(origin, Vector3.new(0, 40, 0), params)
-		if hit ~= nil and hit.Position.Y - y < RAMP_HEADROOM then
-			fail("lowHeadroom", origin, string.format("%.2f studs of headroom", hit.Position.Y - y))
+		local down = workspace:Raycast(world(z, y + 1), Vector3.new(0, -3, 0), ownParams)
+		if down ~= nil and math.abs(down.Position.Y - y) < 0.3 then
+			local hit = workspace:Raycast(origin, Vector3.new(0, 40, 0), params)
+			if hit ~= nil and hit.Position.Y - y < RAMP_HEADROOM then
+				fail(
+					"lowHeadroom",
+					origin,
+					string.format("%.2f studs of headroom", hit.Position.Y - y)
+				)
+			end
 		end
 	end
 	return failures
@@ -537,7 +596,7 @@ function GeometryAudit.run(opts: Options?): Report
 			for _, child in ipairs(entry.folder:GetChildren()) do
 				if child:IsA("WedgePart") and child:GetAttribute("noclipKind") == "ramp" then
 					report.ramps.count += 1
-					for _, item in ipairs(checkRamp(child, params)) do
+					for _, item in ipairs(checkRamp(child, params, folder)) do
 						report.ramps.failures.count += 1
 						addSample(report.ramps.failures.samples, item)
 						defect(item)
