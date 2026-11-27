@@ -473,12 +473,39 @@ local function partFingerprint(config: any, seed: number): (string, number)
 	return Hash.of(table.concat(lines, "\n")), #lines
 end
 
-H.test("pinned Level 0 fingerprint (templates clear their footprint)", function()
-	-- The shipped config fingerprints to these values. Re-baseline deliberately
-	-- whenever a feature changes geometry on purpose.
+local function pinConfig(): any
 	local config = clone(Level0)
 	config.world = clone(Level0.world)
 	config.world.worldSizeChunks = 3
+	return config
+end
+
+H.test("pinned Level 0 fingerprint (templates clear their footprint)", function()
+	-- The shipped config fingerprints to these values. Re-baseline deliberately
+	-- whenever a feature changes geometry on purpose. Rebaselined when Level 0
+	-- terrain was re-enabled (ADR 0032 step 4); the previous flat pins (seed 42
+	-- 2a1d1eac7fbc544a / 524, seed 1337 91dd197390bbc4e5 / 500) live in the
+	-- "flat Level 0" test below.
+	local config = pinConfig()
+
+	local fp42, count42 = partFingerprint(config, 42)
+	H.eq(fp42, "d10a18340f67f4ae", "seed 42 fingerprint")
+	H.eq(count42, 603, "seed 42 part count")
+
+	local fp1337, count1337 = partFingerprint(config, 1337)
+	H.eq(fp1337, "d9f25dc6bdb27cc0", "seed 1337 fingerprint")
+	H.eq(count1337, 569, "seed 1337 part count")
+end)
+
+H.test("flat Level 0 (terrain off) keeps the pre-terrain pins", function()
+	-- Terrain off must be byte-identical to the old flat Level 0.
+	local config = pinConfig()
+	config.strategy = clone(Level0.strategy)
+	config.strategy.params = clone(Level0.strategy.params)
+	config.strategy.params.terrain = clone(Level0.strategy.params.terrain)
+	config.strategy.params.terrain.plateauShare = 0
+	config.strategy.params.terrain.sunkenShare = 0
+	config.strategy.params.terrain.rampChance = 0
 
 	local fp42, count42 = partFingerprint(config, 42)
 	H.eq(fp42, "2a1d1eac7fbc544a", "seed 42 fingerprint")
@@ -487,4 +514,73 @@ H.test("pinned Level 0 fingerprint (templates clear their footprint)", function(
 	local fp1337, count1337 = partFingerprint(config, 1337)
 	H.eq(fp1337, "91dd197390bbc4e5", "seed 1337 fingerprint")
 	H.eq(count1337, 500, "seed 1337 part count")
+end)
+
+H.test("shipped Level 0 sweep: sparse terrain, sound ramps, no pockets", function()
+	local totalRamps, chunks, plateau, sunken, walkable = 0, 0, 0, 0, 0
+	for seed = 1, 10 do
+		local make = OpenAdditive.world(pinConfig(), seed)
+		local stepMax = Terrain.stepMax(make)
+		for cz = 0, 2 do
+			for cx = 0, 2 do
+				local layout = OpenAdditive.layout(make, cx, cz)
+				chunks += 1
+				local where = "seed " .. seed .. " chunk " .. cx .. "," .. cz
+				for index = 1, layout.n * layout.n do
+					if not layout.solid[index] then
+						walkable += 1
+						if layout.floorY[index] > 0 then
+							plateau += 1
+						elseif layout.floorY[index] < 0 then
+							sunken += 1
+						end
+					end
+					if layout.ramp[index] ~= nil then
+						totalRamps += 1
+					end
+				end
+				H.eq(
+					#WalkGraph.unbridgedRises(layout, { stepMax = stepMax }),
+					0,
+					where .. ": no open cliffs"
+				)
+				local graph = WalkGraph.build(layout, { stepMax = stepMax })
+				local comps = WalkGraph.components(graph)
+				if #comps > 0 then
+					local main = 1
+					for index = 2, #comps do
+						if comps[index].size > comps[main].size then
+							main = index
+						end
+					end
+					local reach = WalkGraph.reachableFrom(graph, comps[main].cells[1])
+					for _, comp in ipairs(comps) do
+						if not reach[comp.cells[1]] then
+							local outward = false
+							for _, index in ipairs(comp.cells) do
+								outward = outward or opensOutward(make, layout, index, stepMax)
+							end
+							H.ok(
+								outward,
+								where .. ": unreachable component of " .. comp.size .. " cells"
+							)
+						end
+					end
+				end
+			end
+		end
+	end
+	local perChunk = totalRamps / chunks
+	print(
+		string.format(
+			"  [level0] plateau share %.3f, sunken share %.3f, ramps per chunk %.2f (%d ramps, %d chunks)",
+			plateau / walkable,
+			sunken / walkable,
+			perChunk,
+			totalRamps,
+			chunks
+		)
+	)
+	H.ok(totalRamps >= 1, "at least one ramp across the sweep")
+	H.ok(perChunk <= 2, "ramps per chunk " .. perChunk)
 end)
