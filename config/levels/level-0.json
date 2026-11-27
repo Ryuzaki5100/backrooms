@@ -223,11 +223,23 @@
       ],
       "hallShare": 0.22,
       "hallBlocks": 2,
-      "heights": [
-        12,
-        14,
-        16
-      ],
+      "ceiling": {
+        "bands": [
+          {
+            "height": 12,
+            "weight": 1
+          },
+          {
+            "height": 14,
+            "weight": 1
+          },
+          {
+            "height": 16,
+            "weight": 1
+          }
+        ],
+        "zoneBlocks": 1
+      },
       "spawn": {
         "minOpenFaces": 3,
         "openRadiusCells": 4

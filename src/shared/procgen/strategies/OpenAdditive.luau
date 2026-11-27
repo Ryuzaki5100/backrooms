@@ -74,8 +74,73 @@ function OpenAdditive.world(config: any, seed: number): any
 		period = size.chunks * n,
 		boundary = boundary,
 		blocks = {},
+		ceiling = OpenAdditive.resolveCeiling(params),
 		terrainShares = Terrain.drawShares(seed, params.terrain),
 	}
+end
+
+-- Ceiling bands (ADR 0032 D69). `strategy.params.ceiling = { bands = [{ height,
+-- weight }], zoneBlocks }`; without it, `heights` are equal-weight bands.
+-- `uniform` keeps the legacy index mapping floor(roll * n) + 1 byte for byte,
+-- because a cumulative-weight walk could round differently at a band edge.
+export type Ceiling = {
+	heights: { number },
+	cumulative: { number },
+	total: number,
+	uniform: boolean,
+	zoneBlocks: number,
+}
+
+function OpenAdditive.resolveCeiling(params: any): Ceiling
+	local ceiling = params.ceiling
+	local heights: { number } = {}
+	local cumulative: { number } = {}
+	local total = 0
+	local uniform = true
+	local zoneBlocks = 1
+	if ceiling ~= nil and ceiling.bands ~= nil then
+		local first = nil
+		for index, band in ipairs(ceiling.bands) do
+			heights[index] = band.height
+			total += band.weight
+			cumulative[index] = total
+			if first == nil then
+				first = band.weight
+			elseif band.weight ~= first then
+				uniform = false
+			end
+		end
+		zoneBlocks = ceiling.zoneBlocks or 1
+	else
+		heights = params.heights or DEFAULTS.heights
+		for index = 1, #heights do
+			cumulative[index] = index
+		end
+		total = #heights
+	end
+	return {
+		heights = heights,
+		cumulative = cumulative,
+		total = total,
+		uniform = uniform,
+		zoneBlocks = zoneBlocks,
+	}
+end
+
+-- Map a roll in [0,1) to a band height.
+function OpenAdditive.pickHeight(ceiling: Ceiling, roll: number): number
+	local heights = ceiling.heights
+	local count = #heights
+	if ceiling.uniform then
+		return heights[math.min(count, math.max(1, math.floor(roll * count) + 1))]
+	end
+	local target = roll * ceiling.total
+	for index = 1, count do
+		if target < ceiling.cumulative[index] then
+			return heights[index]
+		end
+	end
+	return heights[count]
 end
 
 local function blockOf(make: any, gx: number, gz: number): any
@@ -139,9 +204,19 @@ local function blockOf(make: any, gx: number, gz: number): any
 		end
 	end
 
-	local heights = param(make.params, "heights", DEFAULTS.heights)
+	-- The draw is always consumed so the stream is the same whatever the zone
+	-- scale; a zone overrides the roll with a hash of the zone coordinates.
+	local ceiling: Ceiling = make.ceiling
 	local roll = rng:nextFloat()
-	local height = heights[math.min(#heights, math.max(1, math.floor(roll * #heights) + 1))]
+	if ceiling.zoneBlocks > 1 then
+		roll = Common.hash01(
+			make.seed,
+			"ceiling",
+			math.floor(bx / ceiling.zoneBlocks),
+			math.floor(bz / ceiling.zoneBlocks)
+		)
+	end
+	local height = OpenAdditive.pickHeight(ceiling, roll)
 
 	local block = { E = E, S = S, solid = solid, height = height }
 	make.blocks[key] = block
