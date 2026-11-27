@@ -27,9 +27,7 @@ local REGISTRY: { [string]: any } = {
 
 local DEFAULT = "open_additive"
 
-local Features = if script ~= nil
-	then require(script.Parent.features.Features)
-	else require("./features/Features")
+local Level = if script ~= nil then require(script.Parent.level.Level) else require("./level/Level")
 
 function Strategy.names(): { string }
 	local names = {}
@@ -131,27 +129,10 @@ function Strategy.validate(config: any): { string }
 		end
 	end
 
-	for _, problem in ipairs(Features.validate(config)) do
+	-- Section rules live with the owning systems (level/systems/); resolve runs
+	-- them all, plus the ownership check.
+	for _, problem in ipairs(Level.resolve(config).problems) do
 		table.insert(problems, problem)
-	end
-
-	local details = config.details or {}
-	local detailIds: { [string]: boolean } = {}
-	for index, detail in ipairs(details) do
-		local prefix = "details[" .. index .. "]"
-		if detail.id == nil or detail.id == "" then
-			table.insert(problems, prefix .. ".id: required")
-		elseif detailIds[detail.id] then
-			table.insert(problems, prefix .. ".id: duplicate " .. detail.id)
-		else
-			detailIds[detail.id] = true
-		end
-		if detail.chance ~= nil and (detail.chance < 0 or detail.chance > 1) then
-			table.insert(problems, prefix .. ".chance: must be within [0,1]")
-		end
-		if detail.minSpacing ~= nil and detail.minSpacing < 0 then
-			table.insert(problems, prefix .. ".minSpacing: must be >= 0")
-		end
 	end
 
 	return problems

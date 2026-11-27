@@ -443,4 +443,82 @@ function Terrain.apply(make: any, layout: any): ()
 	end
 end
 
+-- Validation for `strategy.params.terrain` (moved here from Features, messages
+-- unchanged). Accepts the terrain section, or nil for "none configured".
+local VALIDATE_DEFAULT_RISE = 4
+local VALIDATE_DEFAULT_STEP_MAX = 1
+
+local function isPositiveInteger(value: any): boolean
+	return type(value) == "number" and value > 0 and value % 1 == 0
+end
+
+local function validateBand(problems: { string }, prefix: string, value: any): ()
+	if type(value) == "table" then
+		if
+			value[1] == nil
+			or value[2] == nil
+			or value[1] < 0
+			or value[2] < value[1]
+			or value[2] > 1
+		then
+			table.insert(problems, prefix .. ": must be a number or [min,max] band within [0,1]")
+		end
+	elseif type(value) == "number" then
+		if value < 0 or value > 1 then
+			table.insert(problems, prefix .. ": must be within [0,1]")
+		end
+	elseif value ~= nil then
+		table.insert(problems, prefix .. ": must be a number or a band")
+	end
+end
+
+local function validateTerrainParams(problems: { string }, terrain: any): ()
+	local prefix = "strategy.params.terrain."
+	for _, key in ipairs({ "rampSpacing", "extraRampCells", "secondRampFaces" }) do
+		local value = terrain[key]
+		if value ~= nil and not isPositiveInteger(value) then
+			table.insert(problems, prefix .. key .. ": must be a positive integer")
+		end
+	end
+	local chance = terrain.secondRampChance
+	if chance ~= nil and (type(chance) ~= "number" or chance < 0 or chance > 1) then
+		table.insert(problems, prefix .. "secondRampChance: must be a number within [0,1]")
+	end
+	if terrain.stepMax ~= nil and type(terrain.stepMax) ~= "number" then
+		table.insert(problems, prefix .. "stepMax: must be a number")
+	end
+	if terrain.rise ~= nil and type(terrain.rise) ~= "number" then
+		table.insert(problems, prefix .. "rise: must be a number")
+	end
+	if
+		(terrain.stepMax ~= nil or terrain.rise ~= nil)
+		and type(terrain.stepMax or 0) == "number"
+		and type(terrain.rise or 0) == "number"
+	then
+		local stepMax = terrain.stepMax or VALIDATE_DEFAULT_STEP_MAX
+		local rise = terrain.rise or VALIDATE_DEFAULT_RISE
+		if stepMax >= rise then
+			table.insert(
+				problems,
+				prefix
+					.. "stepMax: must be less than terrain.rise (stepMax "
+					.. stepMax
+					.. ", rise "
+					.. rise
+					.. ")"
+			)
+		end
+	end
+end
+
+function Terrain.validate(terrain: any?): { string }
+	local problems: { string } = {}
+	local section = terrain or {}
+	validateBand(problems, "strategy.params.terrain.plateauShare", section.plateauShare)
+	validateBand(problems, "strategy.params.terrain.sunkenShare", section.sunkenShare)
+	validateBand(problems, "strategy.params.terrain.rampChance", section.rampChance)
+	validateTerrainParams(problems, section)
+	return problems
+end
+
 return Terrain
