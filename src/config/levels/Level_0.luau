@@ -243,10 +243,16 @@ return {
 			},
 			["terrain"] = {
 				["minHeadroom"] = 9,
-				["plateauShare"] = 0,
-				["rampChance"] = 0,
+				["plateauShare"] = {
+					0.06,
+					0.1,
+				},
+				["rampChance"] = 1,
 				["rise"] = 4,
-				["sunkenShare"] = 0,
+				["sunkenShare"] = {
+					0.04,
+					0.07,
+				},
 			},
 		},
 	},
