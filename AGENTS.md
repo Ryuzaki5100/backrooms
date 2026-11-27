@@ -66,57 +66,38 @@ a deliberate Studio action (`studio-open`, sync, save), not a build step.
 
 ## Multi-agent workflow
 
-Work is scheduled from an Obsidian vault at `../noclip-protocol-vault` (path in
-`.noclip`). The vault — not this repository — is the queue and the shared memory.
-Never edit the queue by hand while `noclip run` is running.
+Work is planned and tracked by the prodev orchestrator in the vault
+`.prodev-vault` (this repo only). Project history lives in
+`.prodev-vault/noclip-protocol-vault/`: ADRs in `90-decisions`, milestones in
+`75-milestones`, lore in `60-lore`.
 
-| Role | Owns | Never touches |
-|---|---|---|
-| `noclip` | deciding and delegating (primary) | code, design, lore, Studio |
-| `librarian` | task notes, ADRs | any repo file |
-| `designer` | `10-design/`, `00-brief/` | `src/`, Studio |
-| `scripter` | `src/`, `default.project.json` | `place/`, Studio |
-| `asset-smith` | `20-assets/`, Studio instances | `src/` |
-| `audio` | `30-audio/`, `Sound` instances | `src/`, geometry |
-| `qa` | verification reports in `50-log/` | any edit |
-| `builder` | merges, place file, publish | design decisions |
-| `lore-keeper` | `60-lore/` wiki corpus | code, design, `game_hooks` |
+Roles:
 
-Two lanes. `lane: files` tasks run in parallel, each in its own git worktree
-under `.noclip-worktrees/` (gitignored) and on its own `noclip/<task>` branch.
-`lane: studio` tasks run **one at a time, in this checkout**, because Studio is a
-single mutable process and Rojo is bound to this directory.
+- **orchestrator**: plans, files issues, reviews, merges. Never edits code,
+  never commits or pushes.
+- **pro-worker**: implementation, in its own worktree.
+- **pro-worker-lite**: commits, pushes, GitHub chores, docs.
 
-Agent roles are **project-scoped**: they live in `.opencode/agents/` and are
-loaded only while working in this repository (or a worktree of it). `noclip` is
-the default primary and delegates; the eight roles stay selectable so a single
-one can be driven by hand. `noclip agents check` verifies the committed set still
-matches the installed one.
+Rules:
+
+1. Issue first: every task has a GitHub issue.
+2. At most two workers at once, on disjoint files.
+3. Workers branch `prodev/<task-id>` off `feat/open-additive`.
+4. The orchestrator reviews and merges.
+5. Nothing is done until verified: the suite, and Studio Play where it matters.
+6. Lore is cited from `60-lore/`, not paraphrased.
+
+Commands:
 
 ```sh
-noclip status                  # queue board + studio lock
-noclip new "Title" --agent scripter --lane files
-noclip run --once              # dispatch one task
-noclip run                     # drain the backlog, `jobs` at a time
-noclip merge <task-id>         # integrate a files-lane branch
-noclip doctor                  # toolchain, agents, vault, stale locks
+prodev context                 # queue and project state
+prodev task new                # create a task note
+prodev issue new               # file a GitHub issue
+prodev merge                   # integrate a finished worker branch
+prodev log                     # run history
 ```
 
-Rules that keep this safe:
-
-1. A task is claimed by moving its note into `40-tasks/active/`; `mv` is the
-   lock. Do not move notes yourself.
-2. Only `noclip` marks a task `done` (agent exit 0) or `blocked` (non-zero).
-3. Studio work is serialized by `../noclip-protocol-vault/.locks/studio`. A stale lock is
-   reported by `noclip doctor`; remove it only when no agent is running.
-4. Agents commit inside their worktree branch; `builder` merges. Direct commits
-   to `main` from an agent are a bug, not a shortcut.
-5. `scripter` never calls `save_place`; `asset-smith` never edits scripts. If a
-   task needs both, split it into two notes.
-6. Lore is read, not paraphrased. A task that leans on the wiki cites the
-   `60-lore/` note it used; only `lore-keeper` writes there.
-
-Full procedure: `docs/AGENTS-WORKFLOW.md`.
+The previous noclip roles are archived in `docs/archive/noclip-orchestration/`.
 
 ## Committing
 

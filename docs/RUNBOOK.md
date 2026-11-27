@@ -276,23 +276,23 @@ never claim a sync succeeded without reading it back with `script_read`.
 
 **1. Rojo can miss in-place rewrites.** Its watcher reliably picks up *new*
 files but has been observed to skip a rewritten existing module: the session had
-the new `PlanCodec` but kept the old `Plan` and `Version`. `touch` does not help —
+the new `Seed` module but kept the old `Hash` and `Version`. `touch` does not help —
 Rojo compares content, not mtime. Recovery: restart `devenv up`, reconnect the
 plugin, then read the content back. If the instance's `.Source` is current, the
 sync worked.
 
 **2. `execute_luau` probes share Lua's `require` cache.** After a good sync,
-`require(ReplicatedStorage.Procgen.Plan)` can still return the table cached by an
+`require(ReplicatedStorage.Procgen.Seed)` can still return the table cached by an
 earlier probe, making new functions look absent. Check `Instance.Source` first;
 if the source is new but `require` looks old, load fresh instances:
 
 ```lua
 local P = game:GetService("ReplicatedStorage"):WaitForChild("Procgen")
 local probe = Instance.new("Folder")
-for _, name in ipairs({ "Hash", "Version", "Seed", "Plan", "PlanCodec" }) do
+for _, name in ipairs({ "Hash", "Version", "Seed" }) do
 	P:FindFirstChild(name):Clone().Parent = probe
 end
-local Plan = require(probe.Plan)
+local Seed = require(probe.Seed)
 -- assertions here
 probe:Destroy()
 ```
@@ -328,10 +328,10 @@ status                    # git-side state
 sync.sh -m "msg"          # pull, commit, push
 publish                   # rojo upload (needs ROBLOX_API_KEY)
 lint / fmt / build / sourcemap   # devenv script wrappers
-noclip status | run | merge | doctor   # vault task queue (docs/AGENTS-WORKFLOW.md)
+prodev context | task new | issue new | merge | log   # orchestration (AGENTS.md)
 ```
 
-Paths: `src/{server,client,shared}`, `place/`, `scripts/`, `.opencode/`, `../noclip-protocol-vault/`.
+Paths: `src/{server,client,shared}`, `place/`, `scripts/`, `.opencode/`, `.prodev-vault/`.
 Generated and ignored: `build/`, `sourcemap.json`, `globalTypes.d.luau`, `.devenv/`.
 Committed and pinned: `devenv.nix`, `devenv.yaml`, `devenv.lock`.
 
