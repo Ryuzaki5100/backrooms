@@ -40,6 +40,142 @@ function Features.apply(make: any, layout: any): ()
 	Features.applyGated(make, layout)
 end
 
+-- Terrain params that exist in code defaults and now in the schema.
+local TERRAIN_DEFAULT_RISE = 4
+local TERRAIN_DEFAULT_STEP_MAX = 1
+local TERRAIN_DEFAULT_MIN_HEADROOM = 9
+-- Review R1: a player crouching under a hanging wall needs this much clear air.
+local MIN_HANGING_CLEARANCE = 6
+
+local function isPositiveInteger(value: any): boolean
+	return type(value) == "number" and value > 0 and value % 1 == 0
+end
+
+local function validateTerrainParams(problems: { string }, terrain: any): ()
+	local prefix = "strategy.params.terrain."
+	for _, key in ipairs({ "rampSpacing", "extraRampCells", "secondRampFaces" }) do
+		local value = terrain[key]
+		if value ~= nil and not isPositiveInteger(value) then
+			table.insert(problems, prefix .. key .. ": must be a positive integer")
+		end
+	end
+	local chance = terrain.secondRampChance
+	if chance ~= nil and (type(chance) ~= "number" or chance < 0 or chance > 1) then
+		table.insert(problems, prefix .. "secondRampChance: must be a number within [0,1]")
+	end
+	if terrain.stepMax ~= nil and type(terrain.stepMax) ~= "number" then
+		table.insert(problems, prefix .. "stepMax: must be a number")
+	end
+	if terrain.rise ~= nil and type(terrain.rise) ~= "number" then
+		table.insert(problems, prefix .. "rise: must be a number")
+	end
+	if
+		(terrain.stepMax ~= nil or terrain.rise ~= nil)
+		and type(terrain.stepMax or 0) == "number"
+		and type(terrain.rise or 0) == "number"
+	then
+		local stepMax = terrain.stepMax or TERRAIN_DEFAULT_STEP_MAX
+		local rise = terrain.rise or TERRAIN_DEFAULT_RISE
+		if stepMax >= rise then
+			table.insert(
+				problems,
+				prefix
+					.. "stepMax: must be less than terrain.rise (stepMax "
+					.. stepMax
+					.. ", rise "
+					.. rise
+					.. ")"
+			)
+		end
+	end
+end
+
+-- Ceiling bands, or the legacy `heights` list read as equal-weight bands.
+local function validateCeiling(problems: { string }, config: any, terrain: any, features: any): ()
+	local params = (config.strategy and config.strategy.params) or {}
+	local headroom = terrain.minHeadroom or TERRAIN_DEFAULT_MIN_HEADROOM
+	local heights: { any } = {}
+	local label: string
+	local ceiling = params.ceiling
+
+	if ceiling ~= nil then
+		local prefix = "strategy.params.ceiling"
+		if type(ceiling) ~= "table" then
+			table.insert(problems, prefix .. ": must be an object with bands")
+			return
+		end
+		if ceiling.zoneBlocks ~= nil and not isPositiveInteger(ceiling.zoneBlocks) then
+			table.insert(problems, prefix .. ".zoneBlocks: must be a positive integer")
+		end
+		local bands = ceiling.bands
+		if type(bands) ~= "table" or #bands == 0 then
+			table.insert(problems, prefix .. ".bands: must be a non-empty list")
+			return
+		end
+		for index, entry in ipairs(bands) do
+			local bandPrefix = prefix .. ".bands[" .. index .. "]"
+			if type(entry) ~= "table" then
+				table.insert(problems, bandPrefix .. ": must be an object with height and weight")
+				continue
+			end
+			if type(entry.weight) ~= "number" or entry.weight <= 0 then
+				table.insert(problems, bandPrefix .. ".weight: must be a number > 0")
+			end
+			heights[index] = entry.height
+		end
+		label = prefix .. ".bands"
+	elseif params.heights ~= nil then
+		if type(params.heights) ~= "table" or #params.heights == 0 then
+			table.insert(problems, "strategy.params.heights: must be a non-empty list")
+			return
+		end
+		heights = params.heights
+		label = "strategy.params.heights"
+	else
+		return
+	end
+
+	local lowest: number? = nil
+	for index = 1, #heights do
+		local height = heights[index]
+		local where = if ceiling ~= nil
+			then label .. "[" .. index .. "].height"
+			else label .. "[" .. index .. "]"
+		if type(height) ~= "number" then
+			table.insert(problems, where .. ": must be a number")
+		else
+			if height < headroom then
+				table.insert(
+					problems,
+					where .. ": must be >= terrain.minHeadroom (" .. headroom .. ")"
+				)
+			end
+			if lowest == nil or height < lowest then
+				lowest = height
+			end
+		end
+	end
+
+	local hangingWall = features.hangingWall
+	if lowest ~= nil and hangingWall ~= nil and type(hangingWall.depth) == "number" then
+		local clearance = lowest - hangingWall.depth
+		if clearance < MIN_HANGING_CLEARANCE then
+			table.insert(
+				problems,
+				label
+					.. ": lowest height "
+					.. lowest
+					.. " minus features.hangingWall.depth "
+					.. hangingWall.depth
+					.. " leaves "
+					.. clearance
+					.. " studs, need >= "
+					.. MIN_HANGING_CLEARANCE
+			)
+		end
+	end
+end
+
 -- Readable validation for feature params.
 function Features.validate(config: any): { string }
 	local problems = {}
@@ -82,6 +218,9 @@ function Features.validate(config: any): { string }
 	if features.hangingWall ~= nil and (features.hangingWall.depth or 0) < 1 then
 		table.insert(problems, "features.hangingWall.depth: must be >= 1")
 	end
+
+	validateTerrainParams(problems, terrain)
+	validateCeiling(problems, config, terrain, features)
 	return problems
 end
 

@@ -194,6 +194,23 @@ return {
 		["name"] = "open_additive",
 		["params"] = {
 			["block"] = 6,
+			["ceiling"] = {
+				["bands"] = {
+					{
+						["height"] = 12,
+						["weight"] = 1,
+					},
+					{
+						["height"] = 14,
+						["weight"] = 1,
+					},
+					{
+						["height"] = 16,
+						["weight"] = 1,
+					},
+				},
+				["zoneBlocks"] = 1,
+			},
 			["cell"] = 16,
 			["chunkCells"] = 18,
 			["features"] = {
@@ -210,11 +227,6 @@ return {
 			},
 			["hallBlocks"] = 2,
 			["hallShare"] = 0.22,
-			["heights"] = {
-				12,
-				14,
-				16,
-			},
 			["pillarShare"] = 0.25,
 			["pillarSize"] = 2,
 			["runCount"] = {
