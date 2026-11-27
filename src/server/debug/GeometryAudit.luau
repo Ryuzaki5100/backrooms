@@ -76,7 +76,7 @@ export type Report = {
 	ok: boolean,
 }
 
-type Volume = { inverse: CFrame, half: Vector3, part: BasePart }
+type Volume = { cframe: CFrame, half: Vector3, part: BasePart }
 
 local function chunkKeyOf(name: string): (number?, number?)
 	local a, b = string.match(name, "^chunk_(-?%d+):(-?%d+)$")
@@ -92,8 +92,8 @@ end
 
 -- Slab test of a segment against an (inflated) oriented box.
 local function segmentHits(volume: Volume, origin: Vector3, dir: Vector3, length: number): boolean
-	local o = volume.inverse:PointToObjectSpace(origin)
-	local d = volume.inverse:VectorToObjectSpace(dir)
+	local o = volume.cframe:PointToObjectSpace(origin)
+	local d = volume.cframe:VectorToObjectSpace(dir)
 	local half = volume.half + Vector3.new(0.25, 0.25, 0.25)
 	local tNear, tFar = 0, length
 	local axes = {
@@ -140,7 +140,7 @@ end
 -- ignored: a floor hole is a thin part but the hole is the whole column.
 local function inOpeningColumn(volumes: { Volume }, x: number, z: number): boolean
 	for _, volume in ipairs(volumes) do
-		local p = volume.inverse:PointToObjectSpace(Vector3.new(x, volume.part.Position.Y, z))
+		local p = volume.cframe:PointToObjectSpace(Vector3.new(x, volume.part.Position.Y, z))
 		if math.abs(p.X) <= volume.half.X and math.abs(p.Z) <= volume.half.Z then
 			return true
 		end
@@ -160,7 +160,7 @@ local function collectOpenings(folder: Instance): ({ Volume }, { [Instance]: boo
 			return
 		end
 		table.insert(volumes, {
-			inverse = instance.CFrame:Inverse(),
+			cframe = instance.CFrame,
 			half = instance.Size / 2,
 			part = instance,
 		})
@@ -293,8 +293,10 @@ local function checkRamp(part: BasePart, params: RaycastParams, folder: Instance
 	checkEnd("high", highSign * (hz + 1), cy + hy)
 
 	-- Obstructions: any other part standing in the space above the ramp surface
-	-- (a pillar in the middle of the stair). The footprint is shrunk a little so
-	-- side walls and floor slabs that only touch its boundary never count.
+	-- (a pillar in the middle of the stair). Side walls are centred on the cell
+	-- border, so they reach half their thickness into the ramp's width; the
+	-- footprint is therefore narrowed by 1.5 studs per side (and 0.5 along the
+	-- slope) so walls and floor slabs that merely close the ramp never count.
 	local blocker: BasePart? = nil
 	local boxHeight = size.Y + RAMP_HEADROOM
 	local boxCenter = Vector3.new(cf.Position.X, cy - hy + boxHeight / 2, cf.Position.Z)
@@ -303,7 +305,7 @@ local function checkRamp(part: BasePart, params: RaycastParams, folder: Instance
 	query.FilterType = Enum.RaycastFilterType.Include
 	query.FilterDescendantsInstances = { folder }
 	local footprint =
-		Vector3.new(math.max(size.X - 1, 0.5), boxHeight - 0.5, math.max(size.Z - 1, 0.5))
+		Vector3.new(math.max(size.X - 3, 0.5), boxHeight - 0.5, math.max(size.Z - 1, 0.5))
 	for _, other in ipairs(workspace:GetPartBoundsInBox(box, footprint, query)) do
 		if other ~= part then
 			-- Surface height under the other part's centre, clamped to the wedge.
