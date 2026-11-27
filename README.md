@@ -31,16 +31,5 @@ contract.
 
 ## Multi-agent work
 
-Work is scheduled from the Obsidian vault at `../noclip-protocol-vault`, not from a chat
-window:
-
-```sh
-noclip status      # the queue
-noclip run         # dispatch every queued task to its role
-noclip merge <id>  # integrate a files-lane branch
-```
-
-Seven roles (`librarian`, `designer`, `scripter`, `asset-smith`, `audio`, `qa`,
-`builder`) share the vault as memory; `files`-lane tasks run in parallel git
-worktrees, `studio`-lane tasks run one at a time. Details:
-`docs/AGENTS-WORKFLOW.md`.
+Work is planned by the prodev orchestrator in `.prodev-vault` (this repo). See
+AGENTS.md "Multi-agent workflow".
