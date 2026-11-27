@@ -276,7 +276,8 @@ never claim a sync succeeded without reading it back with `script_read`.
 
 **1. Rojo can miss in-place rewrites.** Its watcher reliably picks up *new*
 files but has been observed to skip a rewritten existing module: the session had
-the new `Seed` module but kept the old `Hash` and `Version`. `touch` does not help —
+the new `PlanCodec` but kept the old `Plan` and `Version` (those node-pipeline
+modules were retired by ADR 0032 A2). `touch` does not help —
 Rojo compares content, not mtime. Recovery: restart `devenv up`, reconnect the
 plugin, then read the content back. If the instance's `.Source` is current, the
 sync worked.

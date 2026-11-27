@@ -3,8 +3,8 @@ description: Materialise the wiki media cache into the vault (images, audio, vid
 ---
 The vault holds a committed manifest but no media bytes. Fetch them locally.
 
-1. Read the vault path from `.noclip` (`vault=`), resolve it against this repo,
-   then read `<vault>/60-lore/FETCH-MEDIA.md`.
+1. The vault is `.prodev-vault/noclip-protocol-vault` (relative to this repo).
+   Read `<vault>/60-lore/FETCH-MEDIA.md`.
 2. Follow it exactly: `media verify` → `media fetch --missing --jobs 4` →
    `media verify`.
 3. The fetch is ~645 MB and takes 15–30 minutes. Run it in the background and
