@@ -1,20 +1,22 @@
 --!strict
 
 local Harness = require("./harness")
+local fs = require("@lune/fs")
 local process = require("@lune/process")
 
-require("./procgen/hash.spec")
-require("./procgen/rng.spec")
-require("./procgen/seed.spec")
-require("./procgen/config.spec")
-require("./procgen/grid.spec")
-require("./procgen/world.spec")
-require("./procgen/seams.spec")
-require("./procgen/strategy.spec")
-require("./procgen/open-additive.spec")
-require("./procgen/walkgraph.spec")
-require("./procgen/closure.spec")
-require("./procgen/template.spec")
-require("./procgen/streaming.spec")
+-- Every tests/procgen/*.spec.luau runs, in sorted order, so adding a spec never
+-- means editing this file. Run from the repository root (`lune run tests/run.luau`).
+local specs = {}
+for _, entry in ipairs(fs.readDir("tests/procgen")) do
+	local name = string.match(entry, "^(.+)%.spec%.luau$")
+	if name ~= nil then
+		table.insert(specs, name)
+	end
+end
+table.sort(specs)
+
+for _, name in ipairs(specs) do
+	require("./procgen/" .. name .. ".spec")
+end
 
 process.exit(Harness.run())
