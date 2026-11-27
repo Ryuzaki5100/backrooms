@@ -933,6 +933,36 @@
         "ambient": {
           "type": "string",
           "pattern": "^#[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]$"
+        },
+        "brightness": { "type": "number", "minimum": 0, "maximum": 10 },
+        "outdoorAmbient": { "type": "string", "pattern": "^#[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]$" },
+        "fogStart": { "type": "number", "minimum": 0, "maximum": 5000 },
+        "fogColor": { "type": "string", "pattern": "^#[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]$" },
+        "exposure": { "type": "number", "minimum": -3, "maximum": 3 },
+        "globalShadows": { "type": "boolean" },
+        "environmentDiffuseScale": { "type": "number", "minimum": 0, "maximum": 1 },
+        "environmentSpecularScale": { "type": "number", "minimum": 0, "maximum": 1 },
+        "atmosphere": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "density": { "type": "number", "minimum": 0, "maximum": 1 },
+            "offset": { "type": "number", "minimum": 0, "maximum": 1 },
+            "color": { "type": "string", "pattern": "^#[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]$" },
+            "decay": { "type": "string", "pattern": "^#[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]$" },
+            "glare": { "type": "number", "minimum": 0, "maximum": 10 },
+            "haze": { "type": "number", "minimum": 0, "maximum": 10 }
+          }
+        },
+        "colorCorrection": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "brightness": { "type": "number", "minimum": -1, "maximum": 1 },
+            "contrast": { "type": "number", "minimum": -1, "maximum": 1 },
+            "saturation": { "type": "number", "minimum": -1, "maximum": 1 },
+            "tintColor": { "type": "string", "pattern": "^#[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]$" }
+          }
         }
       }
     },

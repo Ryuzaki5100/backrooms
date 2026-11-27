@@ -169,7 +169,6 @@ H.test("framework: Level 0 resolves with no problems and warns about planned sec
 		warned[warning] = true
 	end
 	for _, id in ipairs({
-		"lighting",
 		"hazards",
 		"props",
 		"entities",
@@ -182,8 +181,19 @@ H.test("framework: Level 0 resolves with no problems and warns about planned sec
 			"missing warning for " .. id
 		)
 	end
-	H.eq(#resolved.warnings, 7)
+	H.eq(#resolved.warnings, 6)
 	print("  [framework] Level 0 warnings: " .. table.concat(resolved.warnings, " | "))
+end)
+
+H.test("framework: the runtime order includes the active lighting system", function()
+	local registry = Level.defaultRegistry()
+	local runtime = {}
+	for _, system in ipairs(registry:order("runtime")) do
+		runtime[system.id] = system
+	end
+	H.ok(runtime.lighting ~= nil, "lighting is in the runtime order")
+	H.eq(runtime.lighting.status, "active")
+	H.ok(runtime.lighting.hooks.runtime ~= nil, "lighting has a runtime hook")
 end)
 
 H.test("framework: an unowned top-level key or strategy param is a problem", function()
